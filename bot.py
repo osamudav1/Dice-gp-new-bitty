@@ -360,7 +360,7 @@ def create_result_image(dice1, dice2, total, result_type, winners):
 
 # ==================== AUTO CLOSE GAME FUNCTION ====================
 async def auto_close_game(context: ContextTypes.DEFAULT_TYPE):
-    """Auto close game after 2 minutes"""
+    """Auto close game after 1 minute"""
     job = context.job
     game_id = job.data
     
@@ -464,7 +464,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "👑 **ပိုင်ရှင် ထိန်းချုပ်ခန်း**\n\n"
                 "Game Group ကို အောက်ပါခလုတ်များဖြင့် ထိန်းချုပ်နိုင်ပါသည်။\n\n"
-                "**သတိပြုရန်:** Game စတင်ပါက 2 မိနစ်အကြာတွင် အလိုအလျောက်ပိတ်ပါမည်။",
+                "**သတိပြုရန်:** Game စတင်ပါက 1 မိနစ်အကြာတွင် အလိုအလျောက်ပိတ်ပါမည်။",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
@@ -507,14 +507,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text=f"**ပွဲစဉ်** - `{game_id}`\n"
                          f"**စတင်လောင်းလို့ရပါပြီ!**\n\n"
                          f"**ကစားနည်း:** S100, B100, J100 စသည်ဖြင့်ရိုက်ထည့်ပါ။\n\n"
-                         f"⏰ **2 မိနစ်အကြာတွင် အလိုအလျောက်ပိတ်ပါမည်။**",
+                         f"⏰ **1 မိနစ်အကြာတွင် အလိုအလျောက်ပိတ်ပါမည်။**",
                     parse_mode='Markdown'
                 )
                 
-                # Schedule auto close after 0 minutes (30 seconds)
+                # Schedule auto close after 1 minute (60 seconds)
                 context.job_queue.run_once(
                     auto_close_game, 
-                    30,  # 0 minutes in seconds
+                    60,  # 1 minute in seconds
                     data=game_id,
                     name=f"close_game_{game_id}"
                 )
@@ -1130,7 +1130,7 @@ def main():
     print("=" * 60)
     print("✅ Features:")
     print("   - Owner DM: Full control panel with all buttons")
-    print("   - Game Group: Auto close after 2 minutes")
+    print("   - Game Group: Auto close after 1 minute (FIXED)")
     print("   - Game Group: Users can bet with S100, B100, J100")
     print("   - Game Group: Bot replies to bets with exact format")
     print("   - Game Group: Auto permissions control")
