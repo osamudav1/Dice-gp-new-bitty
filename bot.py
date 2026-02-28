@@ -476,16 +476,194 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.id == OWNER_ID:
             # Owner ဖြစ်ရင် ဆက်လုပ်မယ်
             if data == 'owner_only_start':
-                await query.answer("Game စတင်ရန် ခလုတ်ကို နှိပ်ပါသည်။")
-                # ဒီမှာ Game စတင်ရန် လုပ်ဆောင်ချက်ထည့်နိုင်တယ်
+                await query.answer("✅ Game စတင်ရန်")
+                # Game စတင်ရန် လုပ်ဆောင်ချက်
+                game_id = create_game()
+                await context.bot.send_message(
+                    chat_id=GAME_GROUP_ID,
+                    text=f"🌟 **ပွဲစဉ်** ➖ `{game_id}`\n"
+                         f"✅ **စတင်လောင်းလို့ရပါပြီ!**\n"
+                         f"➖➖➖➖➖➖➖➖➖➖\n\n"
+                         f"**ကစားနည်း:** S100, B100, J100 စသည်ဖြင့်ရိုက်ထည့်ပါ။",
+                    parse_mode='Markdown'
+                )
             elif data == 'owner_only_stop':
-                await query.answer("Game ပိတ်ရန် ခလုတ်ကို နှိပ်ပါသည်။")
+                await query.answer("✅ Game ပိတ်ရန်")
+                # Game ပိတ်ရန် လုပ်ဆောင်ချက်
+                # Close chat permissions
+                await context.bot.set_chat_permissions(
+                    chat_id=GAME_GROUP_ID,
+                    permissions=ChatPermissions(
+                        can_send_messages=False,
+                        can_send_media_messages=False,
+                        can_send_polls=False,
+                        can_send_other_messages=False,
+                        can_add_web_page_previews=False
+                    )
+                )
+                
+                await asyncio.sleep(1)
+                
+                game = get_current_game()
+                if game:
+                    bets = get_game_bets(game['game_id'])
+                    
+                    summary = f"✨ **ပွဲစဉ်** ➖ `{game['game_id']}`\n"
+                    summary += f"➖ **လောင်းကြေးပိတ်ပါပြီ!** ➖\n\n"
+                    
+                    for bet in bets:
+                        multiplier = "5ဆ" if bet['bet_type'] == 'japort' else "2ဆ"
+                        summary += f"👤 {bet['user_name']} ➖ {bet['bet_type']}({bet['bet_type'][0]}) {bet['amount']} ({multiplier})\n"
+                    
+                    await context.bot.send_message(chat_id=GAME_GROUP_ID, text=summary, parse_mode='Markdown')
+                    await context.bot.send_message(
+                        chat_id=GAME_GROUP_ID,
+                        text="🎲 **အံစာတုံး ၂ တုံး ပို့ဖို့ စောင့်နေပါသည်။**",
+                        parse_mode='Markdown'
+                    )
+                    
+                    context.user_data['awaiting_dice'] = game['game_id']
             elif data == 'owner_only_small':
-                await query.answer("Small ခလုတ်ကို နှိပ်ပါသည်။")
+                await query.answer("✅ Small အနိုင်ကြေညာရန်")
+                # Small result logic
+                game_id = context.user_data.get('awaiting_dice')
+                if game_id:
+                    winners = update_bet_results(game_id, 'small')
+                    
+                    # Process winners
+                    winner_list = []
+                    for bet in winners:
+                        multiplier = 2
+                        winnings = bet[4] * multiplier
+                        new_balance = update_balance(bet[2], winnings, 'add')
+                        user_info = get_user(bet[2])
+                        winner_list.append({
+                            'user_name': user_info['name'],
+                            'amount': bet[4],
+                            'winnings': winnings,
+                            'new_balance': new_balance
+                        })
+                    
+                    # Send results
+                    result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
+                    result_text += f"💥 **ရလဒ် - SMALL (2ဆ)** 💥\n\n"
+                    
+                    for winner in winner_list:
+                        result_text += f"👤 {winner['user_name']} ➖ {winner['amount']}(လောင်း) + {winner['winnings'] - winner['amount']}(မြတ်) = {winner['winnings']}(စုစုပေါင်း)\n"
+                        result_text += f"💳 **လက်ကျန်** ➖ {winner['new_balance']}Ks\n\n"
+                    
+                    await context.bot.send_message(chat_id=GAME_GROUP_ID, text=result_text, parse_mode='Markdown')
+                    
+                    # Close game
+                    close_game(game_id)
+                    
+                    # Reset permissions
+                    await context.bot.set_chat_permissions(
+                        chat_id=GAME_GROUP_ID,
+                        permissions=ChatPermissions(
+                            can_send_messages=True,
+                            can_send_media_messages=True,
+                            can_send_polls=True,
+                            can_send_other_messages=True,
+                            can_add_web_page_previews=True
+                        )
+                    )
+                    
+                    del context.user_data['awaiting_dice']
             elif data == 'owner_only_big':
-                await query.answer("Big ခလုတ်ကို နှိပ်ပါသည်။")
+                await query.answer("✅ Big အနိုင်ကြေညာရန်")
+                # Big result logic
+                game_id = context.user_data.get('awaiting_dice')
+                if game_id:
+                    winners = update_bet_results(game_id, 'big')
+                    
+                    # Process winners
+                    winner_list = []
+                    for bet in winners:
+                        multiplier = 2
+                        winnings = bet[4] * multiplier
+                        new_balance = update_balance(bet[2], winnings, 'add')
+                        user_info = get_user(bet[2])
+                        winner_list.append({
+                            'user_name': user_info['name'],
+                            'amount': bet[4],
+                            'winnings': winnings,
+                            'new_balance': new_balance
+                        })
+                    
+                    # Send results
+                    result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
+                    result_text += f"💥 **ရလဒ် - BIG (2ဆ)** 💥\n\n"
+                    
+                    for winner in winner_list:
+                        result_text += f"👤 {winner['user_name']} ➖ {winner['amount']}(လောင်း) + {winner['winnings'] - winner['amount']}(မြတ်) = {winner['winnings']}(စုစုပေါင်း)\n"
+                        result_text += f"💳 **လက်ကျန်** ➖ {winner['new_balance']}Ks\n\n"
+                    
+                    await context.bot.send_message(chat_id=GAME_GROUP_ID, text=result_text, parse_mode='Markdown')
+                    
+                    # Close game
+                    close_game(game_id)
+                    
+                    # Reset permissions
+                    await context.bot.set_chat_permissions(
+                        chat_id=GAME_GROUP_ID,
+                        permissions=ChatPermissions(
+                            can_send_messages=True,
+                            can_send_media_messages=True,
+                            can_send_polls=True,
+                            can_send_other_messages=True,
+                            can_add_web_page_previews=True
+                        )
+                    )
+                    
+                    del context.user_data['awaiting_dice']
             elif data == 'owner_only_japort':
-                await query.answer("Japort 7 ခလုတ်ကို နှိပ်ပါသည်။")
+                await query.answer("✅ Japort 7 အနိုင်ကြေညာရန်")
+                # Japort result logic
+                game_id = context.user_data.get('awaiting_dice')
+                if game_id:
+                    winners = update_bet_results(game_id, 'japort')
+                    
+                    # Process winners
+                    winner_list = []
+                    for bet in winners:
+                        multiplier = 5
+                        winnings = bet[4] * multiplier
+                        new_balance = update_balance(bet[2], winnings, 'add')
+                        user_info = get_user(bet[2])
+                        winner_list.append({
+                            'user_name': user_info['name'],
+                            'amount': bet[4],
+                            'winnings': winnings,
+                            'new_balance': new_balance
+                        })
+                    
+                    # Send results
+                    result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
+                    result_text += f"💥 **ရလဒ် - JAPORT 7 (5ဆ)** 💥\n\n"
+                    
+                    for winner in winner_list:
+                        result_text += f"👤 {winner['user_name']} ➖ {winner['amount']}(လောင်း) + {winner['winnings'] - winner['amount']}(မြတ်) = {winner['winnings']}(စုစုပေါင်း)\n"
+                        result_text += f"💳 **လက်ကျန်** ➖ {winner['new_balance']}Ks\n\n"
+                    
+                    await context.bot.send_message(chat_id=GAME_GROUP_ID, text=result_text, parse_mode='Markdown')
+                    
+                    # Close game
+                    close_game(game_id)
+                    
+                    # Reset permissions
+                    await context.bot.set_chat_permissions(
+                        chat_id=GAME_GROUP_ID,
+                        permissions=ChatPermissions(
+                            can_send_messages=True,
+                            can_send_media_messages=True,
+                            can_send_polls=True,
+                            can_send_other_messages=True,
+                            can_add_web_page_previews=True
+                        )
+                    )
+                    
+                    del context.user_data['awaiting_dice']
         else:
             # User ဖြစ်ရင် နှိပ်လို့မရဘူးဆိုတဲ့ message ပြမယ်
             await query.answer("❌ ဤခလုတ်သည် ပိုင်ရှင်အတွက်သာဖြစ်ပြီး သင်နှိပ်၍မရပါ။", show_alert=True)
@@ -1104,6 +1282,9 @@ def main():
     print("✅ Features:")
     print("   - Game Group: /start shows 5 main menu buttons (OWNER ONLY)")
     print("   - Game Group: Inline buttons visible to all but only owner can click")
+    print("   - Game Group: 'Game စတင်ရန်' - Creates new game and opens betting")
+    print("   - Game Group: 'Game ပိတ်ရန်' - Closes betting, shows bet summary, waits for dice")
+    print("   - Game Group: 'Small/Big/Japort 7' - Manual result entry (fallback)")
     print("   - Deposit Group: '1' for user info, +amount/-amount for owner")
     print("   - Owner DM: Welcome Setting & Broadcast")
     print("=" * 60)
