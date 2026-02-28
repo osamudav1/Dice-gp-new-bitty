@@ -68,13 +68,6 @@ def init_db():
     # Insert default welcome if not exists
     c.execute("INSERT OR IGNORE INTO welcome_settings (id, caption) VALUES (1, 'ကြိုဆိုပါတယ်')")
     
-    # Create sequence for game_id starting from 100000
-    c.execute('''CREATE TABLE IF NOT EXISTS game_sequence
-                 (last_id INTEGER)''')
-    
-    # Insert initial value if not exists
-    c.execute("INSERT OR IGNORE INTO game_sequence (last_id) VALUES (99999)")
-    
     conn.commit()
     conn.close()
 
@@ -376,32 +369,25 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mention = f"@{user.username}" if user.username else user.full_name
     create_or_update_user(user.id, user.full_name, mention)
     
-    # GAME GROUP - Owner menu buttons (Owner အတွက်သာ)
+    # GAME GROUP - Owner menu with inline buttons
     if chat.id == GAME_GROUP_ID:
         if user.id == OWNER_ID:
-            print("✅ Game Group Owner - showing 5 main menu buttons")
+            print("✅ Game Group Owner - showing inline control buttons")
             
-            # Main Menu Button ၅ ခု (Owner အတွက်သာ)
-            keyboard = [
-                [KeyboardButton("🎮 Game စတင်ရန်")],
-                [KeyboardButton("⏹️ Game ပိတ်ရန်")],
-                [KeyboardButton("🔴 Small"), KeyboardButton("🔵 Big"), KeyboardButton("🟣 Japort 7")]
+            # Inline Buttons ၂ ခု (Owner သာနှိပ်နိုင်)
+            inline_keyboard = [
+                [InlineKeyboardButton("🎮 Game စတင်ရန်", callback_data='owner_game_start')],
+                [InlineKeyboardButton("⏹️ Game ပိတ်ရန်", callback_data='owner_game_stop')]
             ]
-            
-            reply_markup = ReplyKeyboardMarkup(
-                keyboard=keyboard,
-                resize_keyboard=True,
-                one_time_keyboard=False,
-                input_field_placeholder="ခလုတ်တစ်ခုကိုနှိပ်ပါ..."
-            )
+            inline_reply_markup = InlineKeyboardMarkup(inline_keyboard)
             
             await update.message.reply_text(
-                text="👑 **ပိုင်ရှင် ထိန်းချုပ်ခန်း**\n\nအောက်ပါခလုတ်များကို သင်သာ မြင်ရပါမည်။",
-                reply_markup=reply_markup,
+                text="👑 **ပိုင်ရှင် ထိန်းချုပ်ခန်း**\n\nအောက်ပါခလုတ်များကို သင်သာ နှိပ်နိုင်ပါသည်။",
+                reply_markup=inline_reply_markup,
                 parse_mode='Markdown'
             )
             
-            print("✅ 5 main menu buttons sent to owner")
+            print("✅ Inline control buttons sent to owner")
         else:
             # Normal user in game group
             await update.message.reply_text(
@@ -468,6 +454,61 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     
     print(f"CALLBACK: {data} from user {user.id}")
+    
+    # Owner-only inline buttons
+    if data.startswith('owner_'):
+        if user.id == OWNER_ID:
+            if data == 'owner_game_start':
+                await query.answer("✅ Game စတင်ရန်")
+                game_id = create_game()
+                
+                await context.bot.send_message(
+                    chat_id=GAME_GROUP_ID,
+                    text=f"🌟 **ပွဲစဉ်** ➖ `{game_id}`\n"
+                         f"✅ **စတင်လောင်းလို့ရပါပြီ!**\n"
+                         f"➖➖➖➖➖➖➖➖➖➖\n\n"
+                         f"**ကစားနည်း:** S100, B100, J100 စသည်ဖြင့်ရိုက်ထည့်ပါ။",
+                    parse_mode='Markdown'
+                )
+                
+            elif data == 'owner_game_stop':
+                await query.answer("✅ Game ပိတ်ရန်")
+                
+                # Close chat permissions immediately
+                await context.bot.set_chat_permissions(
+                    chat_id=GAME_GROUP_ID,
+                    permissions=ChatPermissions(
+                        can_send_messages=False,
+                        can_send_media_messages=False,
+                        can_send_polls=False,
+                        can_send_other_messages=False,
+                        can_add_web_page_previews=False
+                    )
+                )
+                
+                game = get_current_game()
+                if game:
+                    bets = get_game_bets(game['game_id'])
+                    
+                    summary = f"✨ **ပွဲစဉ်** ➖ `{game['game_id']}`\n"
+                    summary += f"➖ **လောင်းကြေးပိတ်ပါပြီ!** ➖\n\n"
+                    
+                    for bet in bets:
+                        multiplier = "5ဆ" if bet['bet_type'] == 'japort' else "2ဆ"
+                        bet_type_display = "S" if bet['bet_type'] == 'small' else "B" if bet['bet_type'] == 'big' else "J"
+                        summary += f"👤 {bet['user_name']} ➖ {bet_type_display} {bet['amount']} ({multiplier})\n"
+                    
+                    await context.bot.send_message(chat_id=GAME_GROUP_ID, text=summary, parse_mode='Markdown')
+                    await context.bot.send_message(
+                        chat_id=GAME_GROUP_ID,
+                        text="🎲 **အံစာတုံး ၂ တုံး ပို့ဖို့ စောင့်နေပါသည်။**",
+                        parse_mode='Markdown'
+                    )
+                    
+                    context.user_data['awaiting_dice'] = game['game_id']
+        else:
+            await query.answer("❌ ဤခလုတ်သည် ပိုင်ရှင်အတွက်သာဖြစ်ပြီး သင်နှိပ်၍မရပါ။", show_alert=True)
+        return
     
     # ===== USER CALLBACKS =====
     if data == 'account_info':
@@ -579,117 +620,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     print(f"MESSAGE: '{text}' from user {user.id} in chat {chat.id}")
     
-    # ===== GAME GROUP - OWNER BUTTON HANDLER =====
-    if chat.id == GAME_GROUP_ID and user.id == OWNER_ID:
-        print(f"🔘 Owner button pressed: {text}")
-        
-        # Remove emoji for comparison if needed
-        clean_text = text.replace("🎮 ", "").replace("⏹️ ", "").replace("🔴 ", "").replace("🔵 ", "").replace("🟣 ", "")
-        
-        if text == "🎮 Game စတင်ရန်" or clean_text == "Game စတင်ရန်":
-            game_id = create_game()
-            
-            await context.bot.send_message(
-                chat_id=GAME_GROUP_ID,
-                text=f"🌟 **ပွဲစဉ်** ➖ `{game_id}`\n"
-                     f"✅ **စတင်လောင်းလို့ရပါပြီ!**\n"
-                     f"➖➖➖➖➖➖➖➖➖➖\n\n"
-                     f"**ကစားနည်း:** S100, B100, J100 စသည်ဖြင့်ရိုက်ထည့်ပါ။",
-                parse_mode='Markdown'
-            )
-            return
-            
-        elif text == "⏹️ Game ပိတ်ရန်" or clean_text == "Game ပိတ်ရန်":
-            # Close chat permissions immediately
-            await context.bot.set_chat_permissions(
-                chat_id=GAME_GROUP_ID,
-                permissions=ChatPermissions(
-                    can_send_messages=False,
-                    can_send_media_messages=False,
-                    can_send_polls=False,
-                    can_send_other_messages=False,
-                    can_add_web_page_previews=False
-                )
-            )
-            
-            game = get_current_game()
-            if game:
-                bets = get_game_bets(game['game_id'])
-                
-                summary = f"✨ **ပွဲစဉ်** ➖ `{game['game_id']}`\n"
-                summary += f"➖ **လောင်းကြေးပိတ်ပါပြီ!** ➖\n\n"
-                
-                for bet in bets:
-                    multiplier = "5ဆ" if bet['bet_type'] == 'japort' else "2ဆ"
-                    bet_type_display = "S" if bet['bet_type'] == 'small' else "B" if bet['bet_type'] == 'big' else "J"
-                    summary += f"👤 {bet['user_name']} ➖ {bet_type_display} {bet['amount']} ({multiplier})\n"
-                
-                await context.bot.send_message(chat_id=GAME_GROUP_ID, text=summary, parse_mode='Markdown')
-                await context.bot.send_message(
-                    chat_id=GAME_GROUP_ID,
-                    text="🎲 **အံစာတုံး ၂ တုံး ပို့ဖို့ စောင့်နေပါသည်။**",
-                    parse_mode='Markdown'
-                )
-                
-                context.user_data['awaiting_dice'] = game['game_id']
-            return
-            
-        elif text in ["🔴 Small", "🔵 Big", "🟣 Japort 7", "Small", "Big", "Japort 7"]:
-            # Manual result entry
-            result_type = clean_text.lower()
-            if result_type == "japort 7":
-                result_type = "japort"
-            
-            game_id = context.user_data.get('awaiting_dice')
-            if not game_id:
-                await update.message.reply_text("❌ လက်ရှိ ဂိမ်းမရှိပါ။")
-                return
-            
-            winners = update_bet_results(game_id, result_type)
-            
-            # Process winners
-            result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
-            result_text += f"💥 **Dice bot** 💥\n"
-            result_text += f"**Manual Result:** {result_type.upper()} "
-            
-            if result_type == 'japort':
-                result_text += "5x\n"
-            else:
-                result_text += "2x\n"
-            
-            result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
-            
-            for bet in winners:
-                multiplier = 5 if result_type == 'japort' else 2
-                winnings = bet[4] * multiplier
-                new_balance = update_balance(bet[2], winnings, 'add')
-                user_info = get_user(bet[2])
-                
-                bet_type_display = "S" if result_type == 'small' else "B" if result_type == 'big' else "J"
-                
-                result_text += f"👤 {user_info['name']} ➖ {result_type.capitalize()} > {bet[4]}(လောင်းကြေး) + {winnings - bet[4]}(ဒိုင်လျော်ကြေး) = {winnings}(နိုင်ကြေး)\n"
-                result_text += f"💰 **လက်ကျန်ငွေ** ➖ {new_balance}Ks\n\n"
-            
-            await context.bot.send_message(chat_id=GAME_GROUP_ID, text=result_text, parse_mode='Markdown')
-            
-            # Close game
-            close_game(game_id)
-            
-            # Reset permissions
-            await context.bot.set_chat_permissions(
-                chat_id=GAME_GROUP_ID,
-                permissions=ChatPermissions(
-                    can_send_messages=True,
-                    can_send_media_messages=True,
-                    can_send_polls=True,
-                    can_send_other_messages=True,
-                    can_add_web_page_previews=True
-                )
-            )
-            
-            del context.user_data['awaiting_dice']
-            return
-    
     # ===== DEPOSIT GROUP HANDLER =====
     if chat.id == DEPOSIT_GROUP_ID:
         # User sends "1" to get their info
@@ -782,6 +712,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             update_today_stats(target_user_id, 'today_withdraw', amount)
                             
                             user_data = get_user(target_user_id)
+                            
+                            # ငွေထုတ်ကြေညာချက် - {name} သင်ထုတ်ယူငွေ amount ကိုသင့် kpay/waveအကောင့်ထဲသို့လွဲပေးပီးပါပီ စစ်ဆေးပေးပါ🧊
+                            withdraw_message = f"🧊 {user_data['name']} သင်ထုတ်ယူငွေ {amount} ကျပ်ကို သင့် KPay/Wave အကောင့်ထဲသို့ လွဲပေးပြီးပါပြီ။ စစ်ဆေးပေးပါ။ 🧊"
+                            
+                            # Reply to owner
                             await update.message.reply_text(
                                 f"✅ **ငွေထုတ်ပြီးပါပြီ**\n\n"
                                 f"**အမည်** - {user_data['name']}\n"
@@ -790,6 +725,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 f"**လက်ကျန်ငွေ** - {new_balance} ကျပ်",
                                 parse_mode='Markdown'
                             )
+                            
+                            # Send withdrawal notification to game group
+                            await context.bot.send_message(
+                                chat_id=GAME_GROUP_ID,
+                                text=withdraw_message,
+                                parse_mode='Markdown'
+                            )
+                            
                             print("Withdrawal completed successfully")
                         except Exception as e:
                             print(f"Error in withdrawal: {e}")
@@ -937,12 +880,18 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Determine result: 2-6 = small, 7 = japort, 8-12 = big
                 if 2 <= total <= 6:
                     result_type = 'small'
+                    result_display = "Small(S)"
                 elif total == 7:
                     result_type = 'japort'
+                    result_display = "Japort(J)"
                 elif 8 <= total <= 12:
                     result_type = 'big'
+                    result_display = "Big(B)"
                 else:
                     result_type = 'unknown'
+                    result_display = "Unknown"
+                
+                multiplier_display = "2x" if result_type != 'japort' else "5x"
                 
                 print(f"Result type: {result_type}")
                 
@@ -958,12 +907,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # Start building result message
                     result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
                     result_text += f"💥 **Dice bot** 💥\n"
-                    result_text += f"  {dice1}+{dice2} ={total} "
-                    
-                    result_display = "Small(S)" if result_type == 'small' else "Big(B)" if result_type == 'big' else "Japort(J)"
-                    multiplier_display = "2x" if result_type != 'japort' else "5x"
-                    
-                    result_text += f"{result_display} {multiplier_display}\n"
+                    result_text += f"  {dice1}+{dice2} ={total} {result_display} {multiplier_display}\n"
                     result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
                     
                     # Process winners and calculate winnings
@@ -974,8 +918,11 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                         user_info = get_user(bet[2])
                         
+                        # Get previous balance (current - winnings)
+                        prev_balance = new_balance - winnings
+                        
                         result_text += f"👤 {user_info['name']} ➖ {result_display} > {bet[4]}(လောင်းကြေး) + {winnings - bet[4]}(ဒိုင်လျော်ကြေး) = {winnings}(နိုင်ကြေး)\n"
-                        result_text += f"💰 **လက်ကျန်ငွေ** ➖ {new_balance}Ks\n\n"
+                        result_text += f"💰 **လက်ကျန်ငွေ** ➖ {prev_balance} + {winnings} = {new_balance}Ks\n\n"
                     
                     # Send result
                     await context.bot.send_message(
@@ -1032,12 +979,12 @@ def main():
     print(f"💰 Deposit Group ID: {DEPOSIT_GROUP_ID}")
     print("=" * 60)
     print("✅ Features:")
-    print("   - Game Group: /start for owner menu buttons")
-    print("   - Game Group: Game IDs start from 100000")
-    print("   - Game Group: 'Game စတင်ရန်' - Creates new game")
+    print("   - Game Group: /start shows 2 inline buttons (OWNER ONLY)")
+    print("   - Game Group: 'Game စတင်ရန်' - Creates new game (starts from 100000)")
     print("   - Game Group: 'Game ပိတ်ရန်' - Closes betting, shows bet summary")
-    print("   - Game Group: Dice emoji - Auto calculates results")
+    print("   - Game Group: Dice emoji - Auto calculates results with proper formatting")
     print("   - Deposit Group: '1' for user info, +amount/-amount for owner")
+    print("   - Deposit Group: Withdrawal notification with 🧊 emoji")
     print("   - Owner DM: Welcome Setting & Broadcast")
     print("=" * 60)
     
