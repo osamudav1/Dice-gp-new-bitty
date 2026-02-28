@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageFont
 import io
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ChatPermissions
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes, ConversationHandler
@@ -338,7 +338,7 @@ def create_result_image(dice1, dice2, total, result_type, winners):
     
     return img_bytes
 
-# ==================== MESSAGE HANDLERS ====================
+# ==================== COMMAND HANDLERS ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
@@ -374,6 +374,26 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await update.message.reply_text(welcome['caption'], reply_markup=reply_markup)
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Menu command for game group - shows owner buttons"""
+    user = update.effective_user
+    chat = update.effective_chat
+    
+    # Only work in game group and for owner
+    if chat.id == GAME_GROUP_ID and user.id == OWNER_ID:
+        # Create reply keyboard markup (main menu buttons, not inline)
+        keyboard = [
+            [KeyboardButton("Game စတင်ရန်")],
+            [KeyboardButton("Game ပိတ်ရန်")],
+            [KeyboardButton("Small"), KeyboardButton("Big"), KeyboardButton("Japort 7")]
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        
+        await update.message.reply_text(
+            "Owner Control Panel - Main Menu",
+            reply_markup=reply_markup
+        )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -462,10 +482,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text("ကြိုဆိုပါတယ် Admin", reply_markup=reply_markup)
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+    text = update.message.text
     
-    # ===== GAME OWNER CALLBACKS =====
-    elif data.startswith('game_') and user.id == OWNER_ID:
-        if data == 'game_start':
+    # ===== GAME GROUP - OWNER BUTTON HANDLER =====
+    if chat.id == GAME_GROUP_ID and user.id == OWNER_ID:
+        if text == "Game စတင်ရန်":
             game_id = create_game()
             keyboard = [
                 [InlineKeyboardButton("ငွေသွင်း", url=DEPOSIT_URL)],
@@ -480,8 +505,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      f"➖➖➖➖➖➖➖➖➖➖",
                 reply_markup=reply_markup
             )
-        
-        elif data == 'game_close':
+            return
+            
+        elif text == "Game ပိတ်ရန်":
             # Close chat permissions
             await context.bot.set_chat_permissions(
                 chat_id=GAME_GROUP_ID,
@@ -512,25 +538,72 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 context.user_data['awaiting_dice'] = game['game_id']
-        
-        elif data in ['game_small', 'game_big', 'game_japort']:
-            result_type = data.replace('game_', '')
-            game_id = context.user_data.get('awaiting_dice')
+            return
             
+        elif text in ["Small", "Big", "Japort 7"]:
+            # Manual result entry (fallback)
+            result_type = text.lower()
+            if result_type == "japort 7":
+                result_type = "japort"
+            
+            game_id = context.user_data.get('awaiting_dice')
             if not game_id:
-                await query.message.reply_text("လက်ရှိ ဂိမ်းမရှိပါ။")
+                await update.message.reply_text("လက်ရှိ ဂိမ်းမရှိပါ။")
                 return
             
-            # This is for manual result entry (fallback)
             winners = update_bet_results(game_id, result_type)
             
-            # Process winners and send results
-            await send_game_results(context, game_id, result_type, winners)
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    chat = update.effective_chat
-    text = update.message.text
+            # Process winners
+            winner_list = []
+            for bet in winners:
+                multiplier = 5 if result_type == 'japort' else 2
+                winnings = bet[4] * multiplier
+                new_balance = update_balance(bet[2], winnings, 'add')
+                
+                user_info = get_user(bet[2])
+                winner_list.append({
+                    'user_name': user_info['name'],
+                    'amount': bet[4],
+                    'winnings': winnings,
+                    'new_balance': new_balance
+                })
+            
+            # Send results
+            result_text = f"🎉ပွဲစဉ် ➖ {game_id}\n"
+            result_text += f"💥🎲Dice ပွဲစဉ်ရလဒ်🎲💥\n"
+            result_text += f"Result: {result_type.upper()} "
+            
+            if result_type == 'japort':
+                result_text += "{5ဆ}\n"
+            else:
+                result_text += "{2ဆ}\n"
+            
+            result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
+            
+            for winner in winner_list:
+                result_text += f"{winner['user_name']} ➖ {result_type}({result_type[0]}) \n"
+                result_text += f"{winner['amount']}(လောင်းကြေး) + {winner['winnings'] - winner['amount']}(နိုင်ကြေး) = {winner['winnings']}(စုစုပေါင်းရ)\n"
+                result_text += f"💰လက်ကျန်ငွေ ➖ {winner['new_balance']}Ks\n\n"
+            
+            await context.bot.send_message(chat_id=GAME_GROUP_ID, text=result_text)
+            
+            # Close game
+            close_game(game_id)
+            
+            # Reset permissions
+            await context.bot.set_chat_permissions(
+                chat_id=GAME_GROUP_ID,
+                permissions=ChatPermissions(
+                    can_send_messages=True,
+                    can_send_media_messages=True,
+                    can_send_polls=True,
+                    can_send_other_messages=True,
+                    can_add_web_page_previews=True
+                )
+            )
+            
+            del context.user_data['awaiting_dice']
+            return
     
     # ===== DEPOSIT GROUP HANDLER =====
     if chat.id == DEPOSIT_GROUP_ID:
@@ -591,7 +664,7 @@ Mention - {user_data['mention']}
                             f"လက်ကျန်ငွေ - {new_balance} ကျပ်"
                         )
     
-    # ===== GAME GROUP HANDLER =====
+    # ===== GAME GROUP USER BET HANDLER =====
     elif chat.id == GAME_GROUP_ID:
         # Check if game is open
         game = get_current_game()
@@ -794,28 +867,6 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     del context.user_data['dice2_msg_id']
                     del context.user_data['awaiting_dice']
 
-async def send_game_results(context, game_id, result_type, winners):
-    # Similar to dice handler but for manual result entry
-    pass
-
-async def owner_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send owner buttons in game group"""
-    chat = update.effective_chat
-    user = update.effective_user
-    
-    if chat.id == GAME_GROUP_ID and user.id == OWNER_ID:
-        keyboard = [
-            [InlineKeyboardButton("Game စတင်ရန်", callback_data='game_start')],
-            [InlineKeyboardButton("Game ပိတ်ရန်", callback_data='game_close')],
-            [
-                InlineKeyboardButton("Small", callback_data='game_small'),
-                InlineKeyboardButton("Big", callback_data='game_big'),
-                InlineKeyboardButton("Japort 7", callback_data='game_japort')
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Owner Control Panel", reply_markup=reply_markup)
-
 # ==================== MAIN ====================
 def main():
     # Initialize database
@@ -826,7 +877,7 @@ def main():
     
     # Add handlers
     application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("owner", owner_buttons))
+    application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.Dice.ALL, handle_dice))
