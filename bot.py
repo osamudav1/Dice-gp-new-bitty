@@ -369,35 +369,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mention = f"@{user.username}" if user.username else user.full_name
     create_or_update_user(user.id, user.full_name, mention)
     
-    # GAME GROUP - Owner menu with inline buttons
+    # GAME GROUP - User instructions only (Owner buttons မပါ)
     if chat.id == GAME_GROUP_ID:
-        if user.id == OWNER_ID:
-            print("✅ Game Group Owner - showing inline control buttons")
-            
-            # Inline Buttons ၂ ခု (Owner သာနှိပ်နိုင်)
-            inline_keyboard = [
-                [InlineKeyboardButton("🎮 Game စတင်ရန်", callback_data='owner_game_start')],
-                [InlineKeyboardButton("⏹️ Game ပိတ်ရန်", callback_data='owner_game_stop')]
-            ]
-            inline_reply_markup = InlineKeyboardMarkup(inline_keyboard)
-            
-            await update.message.reply_text(
-                text="👑 **ပိုင်ရှင် ထိန်းချုပ်ခန်း**\n\nအောက်ပါခလုတ်များကို သင်သာ နှိပ်နိုင်ပါသည်။",
-                reply_markup=inline_reply_markup,
-                parse_mode='Markdown'
-            )
-            
-            print("✅ Inline control buttons sent to owner")
-        else:
-            # Normal user in game group
-            await update.message.reply_text(
-                text="🎲 **ကစားရန်**\n\n"
-                     "S100 (Small 100)\n"
-                     "B100 (Big 100)\n"
-                     "J100 (Japort 100)\n\n"
-                     "အနည်းဆုံး လောင်းကြေး ၁၀၀ ကျပ်",
-                parse_mode='Markdown'
-            )
+        # Normal user in game group
+        await update.message.reply_text(
+            text="🎲 **ကစားရန်**\n\n"
+                 "S100 (Small 100)\n"
+                 "B100 (Big 100)\n"
+                 "J100 (Japort 100)\n\n"
+                 "အနည်းဆုံး လောင်းကြေး ၁၀၀ ကျပ်",
+            parse_mode='Markdown'
+        )
         return
     
     # DEPOSIT GROUP
@@ -413,18 +395,24 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # PRIVATE CHAT
+    # PRIVATE CHAT - Owner DM မှ ထိန်းချုပ်မည်
     if chat.type == 'private':
         print("✅ Private chat - showing appropriate menu")
         if user.id == OWNER_ID:
-            # Owner DM menu
+            # Owner DM menu - Game Control Buttons
             keyboard = [
+                [InlineKeyboardButton("🎮 Game စတင်ရန်", callback_data='owner_game_start')],
+                [InlineKeyboardButton("⏹️ Game ပိတ်ရန်", callback_data='owner_game_stop')],
+                [InlineKeyboardButton("🔴 Small", callback_data='owner_small'),
+                 InlineKeyboardButton("🔵 Big", callback_data='owner_big'),
+                 InlineKeyboardButton("🟣 Japort 7", callback_data='owner_japort')],
                 [InlineKeyboardButton("Welcome Setting", callback_data='welcome_setting')],
                 [InlineKeyboardButton("Broadcast", callback_data='broadcast')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
-                "👑 **ပိုင်ရှင် ထိန်းချုပ်ခန်း**\n\nအောက်ပါရွေးချယ်စရာများကိုနှိပ်ပါ။",
+                "👑 **ပိုင်ရှင် ထိန်းချုပ်ခန်း**\n\n"
+                "Game Group ကို အောက်ပါခလုတ်များဖြင့် ထိန်းချုပ်နိုင်ပါသည်။",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
@@ -455,7 +443,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     print(f"CALLBACK: {data} from user {user.id}")
     
-    # Owner-only inline buttons
+    # Owner-only callbacks
     if data.startswith('owner_'):
         if user.id == OWNER_ID:
             if data == 'owner_game_start':
@@ -506,6 +494,62 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     
                     context.user_data['awaiting_dice'] = game['game_id']
+            
+            elif data in ['owner_small', 'owner_big', 'owner_japort']:
+                result_type = data.replace('owner_', '')
+                await query.answer(f"✅ {result_type.capitalize()} အနိုင်ကြေညာရန်")
+                
+                game_id = context.user_data.get('awaiting_dice')
+                if not game_id:
+                    await query.message.reply_text("❌ လက်ရှိ ဂိမ်းမရှိပါ။")
+                    return
+                
+                winners = update_bet_results(game_id, result_type)
+                
+                # Process winners
+                result_display = "Small(S)" if result_type == 'small' else "Big(B)" if result_type == 'big' else "Japort(J)"
+                multiplier_display = "5x" if result_type == 'japort' else "2x"
+                
+                result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
+                result_text += f"💥 **Dice bot** 💥\n"
+                result_text += f"  Manual Result: {result_display} {multiplier_display}\n"
+                result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
+                
+                for bet in winners:
+                    multiplier = 5 if result_type == 'japort' else 2
+                    winnings = bet[4] * multiplier
+                    new_balance = update_balance(bet[2], winnings, 'add')
+                    
+                    user_info = get_user(bet[2])
+                    
+                    # Get previous balance (current - winnings)
+                    prev_balance = new_balance - winnings
+                    
+                    result_text += f"👤 {user_info['name']} ➖ {result_display} > {bet[4]}(လောင်းကြေး) + {winnings - bet[4]}(ဒိုင်လျော်ကြေး) = {winnings}(နိုင်ကြေး)\n"
+                    result_text += f"💰 **လက်ကျန်ငွေ** ➖ {prev_balance} + {winnings} = {new_balance}Ks\n\n"
+                
+                await context.bot.send_message(
+                    chat_id=GAME_GROUP_ID,
+                    text=result_text,
+                    parse_mode='Markdown'
+                )
+                
+                # Close game
+                close_game(game_id)
+                
+                # Reset permissions
+                await context.bot.set_chat_permissions(
+                    chat_id=GAME_GROUP_ID,
+                    permissions=ChatPermissions(
+                        can_send_messages=True,
+                        can_send_media_messages=True,
+                        can_send_polls=True,
+                        can_send_other_messages=True,
+                        can_add_web_page_previews=True
+                    )
+                )
+                
+                del context.user_data['awaiting_dice']
         else:
             await query.answer("❌ ဤခလုတ်သည် ပိုင်ရှင်အတွက်သာဖြစ်ပြီး သင်နှိပ်၍မရပါ။", show_alert=True)
         return
@@ -603,6 +647,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data == 'back_to_owner' and user.id == OWNER_ID:
         keyboard = [
+            [InlineKeyboardButton("🎮 Game စတင်ရန်", callback_data='owner_game_start')],
+            [InlineKeyboardButton("⏹️ Game ပိတ်ရန်", callback_data='owner_game_stop')],
+            [InlineKeyboardButton("🔴 Small", callback_data='owner_small'),
+             InlineKeyboardButton("🔵 Big", callback_data='owner_big'),
+             InlineKeyboardButton("🟣 Japort 7", callback_data='owner_japort')],
             [InlineKeyboardButton("Welcome Setting", callback_data='welcome_setting')],
             [InlineKeyboardButton("Broadcast", callback_data='broadcast')]
         ]
@@ -713,7 +762,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             
                             user_data = get_user(target_user_id)
                             
-                            # ငွေထုတ်ကြေညာချက် - {name} သင်ထုတ်ယူငွေ amount ကိုသင့် kpay/waveအကောင့်ထဲသို့လွဲပေးပီးပါပီ စစ်ဆေးပေးပါ🧊
+                            # ငွေထုတ်ကြေညာချက်
                             withdraw_message = f"🧊 {user_data['name']} သင်ထုတ်ယူငွေ {amount} ကျပ်ကို သင့် KPay/Wave အကောင့်ထဲသို့ လွဲပေးပြီးပါပြီ။ စစ်ဆေးပေးပါ။ 🧊"
                             
                             # Reply to owner
@@ -979,13 +1028,12 @@ def main():
     print(f"💰 Deposit Group ID: {DEPOSIT_GROUP_ID}")
     print("=" * 60)
     print("✅ Features:")
-    print("   - Game Group: /start shows 2 inline buttons (OWNER ONLY)")
-    print("   - Game Group: 'Game စတင်ရန်' - Creates new game (starts from 100000)")
-    print("   - Game Group: 'Game ပိတ်ရန်' - Closes betting, shows bet summary")
-    print("   - Game Group: Dice emoji - Auto calculates results with proper formatting")
+    print("   - Owner DM: Full control panel with all buttons")
+    print("   - Game Group: Auto betting system (runs independently)")
+    print("   - Game Group: Users can bet with S100, B100, J100")
     print("   - Deposit Group: '1' for user info, +amount/-amount for owner")
     print("   - Deposit Group: Withdrawal notification with 🧊 emoji")
-    print("   - Owner DM: Welcome Setting & Broadcast")
+    print("   - Dice: Auto calculates results when owner sends 2 dice")
     print("=" * 60)
     
     application.run_polling(allowed_updates=Update.ALL_TYPES)
