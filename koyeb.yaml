@@ -1,0 +1,28 @@
+name: game-bot
+service:
+  name: game-bot
+  instance_type: nano
+  ports:
+    - port: 8080
+      protocol: http
+  git:
+    repository: https://github.com/YOUR_USERNAME/YOUR_REPO
+    branch: main
+  env:
+    - name: BOT_TOKEN
+      value: "YOUR_BOT_TOKEN"
+    - name: OWNER_ID
+      value: "123456789"
+    - name: GAME_GROUP_ID
+      value: "-1001234567890"
+    - name: DEPOSIT_GROUP_ID
+      value: "-1001234567891"
+    - name: GAME_GROUP_URL
+      value: "https://t.me/your_game_group"
+    - name: DEPOSIT_URL
+      value: "https://t.me/your_deposit_group"
+    - name: WITHDRAW_URL
+      value: "https://t.me/your_withdraw_group"
+  routes:
+    - path: /
+      port: 8080
