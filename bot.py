@@ -341,51 +341,15 @@ def create_result_image(dice1, dice2, total, result_type, winners):
 # ==================== COMMAND HANDLERS ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    chat = update.effective_chat
     
     # Save user to database
     mention = f"@{user.username}" if user.username else user.full_name
     create_or_update_user(user.id, user.full_name, mention)
     
-    # Check if owner
-    if user.id == OWNER_ID:
-        # Owner menu
-        keyboard = [
-            [InlineKeyboardButton("Welcome Setting", callback_data='welcome_setting')],
-            [InlineKeyboardButton("Broadcast", callback_data='broadcast')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("ကြိုဆိုပါတယ် Admin", reply_markup=reply_markup)
-    else:
-        # User menu
-        welcome = get_welcome_settings()
-        keyboard = [
-            [
-                InlineKeyboardButton("အကောင့်အချက်အလက်", callback_data='account_info'),
-                InlineKeyboardButton("ကစားရန်", callback_data='play_game')
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        if welcome['photo_id']:
-            await update.message.reply_photo(
-                photo=welcome['photo_id'],
-                caption=welcome['caption'],
-                reply_markup=reply_markup
-            )
-        else:
-            await update.message.reply_text(welcome['caption'], reply_markup=reply_markup)
-
-async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Menu command for game group - shows owner buttons"""
-    user = update.effective_user
-    chat = update.effective_chat
-    
-    print(f"Menu command from user {user.id} in chat {chat.id}")
-    print(f"OWNER_ID: {OWNER_ID}, GAME_GROUP_ID: {GAME_GROUP_ID}")
-    
-    # Only work in game group and for owner
+    # Check if this is in game group and user is owner
     if chat.id == GAME_GROUP_ID and user.id == OWNER_ID:
-        # Create reply keyboard markup (main menu buttons, not inline)
+        # Game Group Owner Menu - Main Menu Buttons
         keyboard = [
             [KeyboardButton("Game စတင်ရန်")],
             [KeyboardButton("Game ပိတ်ရန်")],
@@ -394,16 +358,45 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         
         await update.message.reply_text(
-            "Owner Control Panel - Main Menu",
+            "ပိုင်ရှင် ထိန်းချုပ်ခန်း - Game Group",
             reply_markup=reply_markup
         )
-        print("Menu buttons sent successfully")
-    else:
-        print("Access denied: Not in game group or not owner")
-        if chat.id != GAME_GROUP_ID:
-            await update.message.reply_text("This command only works in the game group.")
+        return
+    
+    # Check if in deposit group
+    if chat.id == DEPOSIT_GROUP_ID:
+        await update.message.reply_text("ငွေသွင်း/ငွေထုတ် Group မှာ ကြိုဆိုပါတယ်။\n\nသင်၏အချက်အလက်များကြည့်ရန် '1' ကိုနှိပ်ပါ။")
+        return
+    
+    # Regular DM start command
+    if chat.type == 'private':
+        if user.id == OWNER_ID:
+            # Owner DM menu
+            keyboard = [
+                [InlineKeyboardButton("Welcome Setting", callback_data='welcome_setting')],
+                [InlineKeyboardButton("Broadcast", callback_data='broadcast')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text("ကြိုဆိုပါတယ် Admin", reply_markup=reply_markup)
         else:
-            await update.message.reply_text("You are not authorized to use this command.")
+            # User DM menu
+            welcome = get_welcome_settings()
+            keyboard = [
+                [
+                    InlineKeyboardButton("အကောင့်အချက်အလက်", callback_data='account_info'),
+                    InlineKeyboardButton("ကစားရန်", callback_data='play_game')
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            if welcome['photo_id']:
+                await update.message.reply_photo(
+                    photo=welcome['photo_id'],
+                    caption=welcome['caption'],
+                    reply_markup=reply_markup
+                )
+            else:
+                await update.message.reply_text(welcome['caption'], reply_markup=reply_markup)
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -890,7 +883,6 @@ def main():
     
     # Add handlers
     application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.Dice.ALL, handle_dice))
