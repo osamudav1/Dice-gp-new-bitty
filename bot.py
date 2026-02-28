@@ -349,12 +349,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mention = f"@{user.username}" if user.username else user.full_name
     create_or_update_user(user.id, user.full_name, mention)
     
-    # GAME GROUP - Owner menu buttons
+    # GAME GROUP - Main Menu Buttons for Owner (Game စတင်ရန်, Game ပိတ်ရန်, Small, Big, Japort 7)
     if chat.id == GAME_GROUP_ID:
         if user.id == OWNER_ID:
-            print("✅ Game Group Owner - showing main menu buttons")
+            print("✅ Game Group Owner - showing game control buttons")
             
-            # Create keyboard with 3 rows - MAIN MENU BUTTONS
+            # Game Group အတွက် Button ၅ ခု
             keyboard = [
                 [KeyboardButton("🎮 Game စတင်ရန်")],
                 [KeyboardButton("⏹️ Game ပိတ်ရန်")],
@@ -369,11 +369,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             await update.message.reply_text(
-                text="📌 **ပိုင်ရှင် ထိန်းချုပ်ခန်း - Game Group**\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။",
+                text="📌 **ဂိမ်းထိန်းချုပ်ခန်း**\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
-            print("✅ Main menu buttons sent successfully")
+            print("✅ Game control buttons sent successfully")
         else:
             # Normal user in game group
             await update.message.reply_text(
@@ -393,8 +393,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💰 **ငွေသွင်း/ငွေထုတ် Group**\n\n"
             "သင်၏အချက်အလက်များကြည့်ရန် '1' ကိုနှိပ်ပါ။\n"
             "ငွေသွင်းရန် အကောင့်အချက်အလက်များကို Admin ထံမေးမြန်းပါ။\n\n"
-            "**ငွေသွင်းရန်:** +ပမာဏ\n"
-            "**ငွေထုတ်ရန်:** -ပမာဏ",
+            "**ငွေသွင်းရန်:** +ပမာဏ (ဥပမာ: +5000)\n"
+            "**ငွေထုတ်ရန်:** -ပမာဏ (ဥပမာ: -2000)",
             parse_mode='Markdown'
         )
         return
@@ -449,14 +449,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== USER CALLBACKS =====
     if data == 'account_info':
         user_data = get_user(user.id)
+        
+        # Format today's stats
+        today_deposit = user_data['today_deposit']
+        today_withdraw = user_data['today_withdraw']
+        today_bet = user_data['today_bet']
+        balance = user_data['balance']
+        
         await query.edit_message_text(
             f"**အမည်** - {user_data['name']}\n"
-            f"**ID** - {user_data['user_id']}\n"
+            f"**ID** - `{user_data['user_id']}`\n"
             f"**Mention** - {user_data['mention']}\n"
-            f"**ယနေ့သွင်းငွေ** - {user_data['today_deposit']} ကျပ်\n"
-            f"**ယနေ့ထုတ်ငွေ** - {user_data['today_withdraw']} ကျပ်\n"
-            f"**ယနေ့လောင်းငွေ** - {user_data['today_bet']} ကျပ်\n"
-            f"**လက်ကျန်ငွေ** - {user_data['balance']} ကျပ်",
+            f"**ယနေ့သွင်းငွေ** - {today_deposit} ကျပ်\n"
+            f"**ယနေ့ထုတ်ငွေ** - {today_withdraw} ကျပ်\n"
+            f"**ယနေ့လောင်းငွေ** - {today_bet} ကျပ်\n"
+            f"**လက်ကျန်ငွေ** - {balance} ကျပ်",
             parse_mode='Markdown'
         )
     
@@ -549,11 +556,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     print(f"MESSAGE: '{text}' from user {user.id} in chat {chat.id}")
     
-    # ===== GAME GROUP - OWNER BUTTON HANDLER =====
+    # ===== GAME GROUP - OWNER BUTTON HANDLER (Game စတင်ရန်, Game ပိတ်ရန်, Small, Big, Japort 7) =====
     if chat.id == GAME_GROUP_ID and user.id == OWNER_ID:
         print(f"🔘 Owner button pressed: {text}")
         
-        if text == "🎮 Game စတင်ရန်" or text == "Game စတင်ရန်":
+        # Remove emoji for comparison if needed
+        clean_text = text.replace("🎮 ", "").replace("⏹️ ", "").replace("🔴 ", "").replace("🔵 ", "").replace("🟣 ", "")
+        
+        if text == "🎮 Game စတင်ရန်" or clean_text == "Game စတင်ရန်":
             game_id = create_game()
             keyboard = [
                 [InlineKeyboardButton("💰 ငွေသွင်း", url=DEPOSIT_URL)],
@@ -572,7 +582,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
             
-        elif text == "⏹️ Game ပိတ်ရန်" or text == "Game ပိတ်ရန်":
+        elif text == "⏹️ Game ပိတ်ရန်" or clean_text == "Game ပိတ်ရန်":
             # Close chat permissions
             await context.bot.set_chat_permissions(
                 chat_id=GAME_GROUP_ID,
@@ -610,7 +620,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         elif text in ["🔴 Small", "🔵 Big", "🟣 Japort 7", "Small", "Big", "Japort 7"]:
             # Manual result entry (fallback)
-            result_type = text.replace("🔴 ", "").replace("🔵 ", "").replace("🟣 ", "").lower()
+            result_type = clean_text.lower()
             if result_type == "japort 7":
                 result_type = "japort"
             
@@ -1013,8 +1023,8 @@ def main():
     print(f"💰 Deposit Group ID: {DEPOSIT_GROUP_ID}")
     print("=" * 60)
     print("✅ Features:")
-    print("   - Game Group: /start for owner menu buttons")
-    print("   - Deposit Group: '1' for user info")
+    print("   - Game Group: /start for owner menu buttons (Game စတင်ရန်, Game ပိတ်ရန်, Small, Big, Japort 7)")
+    print("   - Deposit Group: '1' for user info (ယနေ့သွင်းငွေ, ယနေ့ထုတ်ငွေ, ယနေ့လောင်းငွေ, လက်ကျန်ငွေ)")
     print("   - Owner DM: Welcome Setting & Broadcast")
     print("=" * 60)
     
