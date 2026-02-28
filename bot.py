@@ -3,6 +3,8 @@ import sqlite3
 import random
 import time
 import asyncio
+import os
+import re
 from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageFont
 import io
@@ -14,13 +16,14 @@ from telegram.ext import (
 )
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-OWNER_ID = 123456789  # Your Telegram ID
-GAME_GROUP_ID = -1001234567890  # Game Group ID
-DEPOSIT_GROUP_ID = -1001234567891  # Deposit/Withdraw Group ID
-GAME_GROUP_URL = "https://t.me/your_game_group"
-DEPOSIT_URL = "https://t.me/your_deposit_group"
-WITHDRAW_URL = "https://t.me/your_withdraw_group"
+# Use environment variables for security
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+OWNER_ID = int(os.environ.get("OWNER_ID", "123456789"))
+GAME_GROUP_ID = int(os.environ.get("GAME_GROUP_ID", "-1001234567890"))
+DEPOSIT_GROUP_ID = int(os.environ.get("DEPOSIT_GROUP_ID", "-1001234567891"))
+GAME_GROUP_URL = os.environ.get("GAME_GROUP_URL", "https://t.me/your_game_group")
+DEPOSIT_URL = os.environ.get("DEPOSIT_URL", "https://t.me/your_deposit_group")
+WITHDRAW_URL = os.environ.get("WITHDRAW_URL", "https://t.me/your_withdraw_group")
 
 # ==================== DATABASE SETUP ====================
 def init_db():
@@ -288,7 +291,6 @@ def parse_bet(text):
         (r'^japort (\d+)$', 'japort'),
     ]
     
-    import re
     for pattern, bet_type in patterns:
         match = re.match(pattern, text)
         if match:
@@ -549,7 +551,6 @@ Mention - {user_data['mention']}
             replied = update.message.reply_to_message
             if replied.from_user.id == context.bot.id:
                 # Extract user_id from replied message
-                import re
                 match = re.search(r'ID - (\d+)', replied.text)
                 if match:
                     target_user_id = match.group(1)
@@ -714,13 +715,15 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 dice2 = context.user_data['dice2']
                 total = dice1 + dice2
                 
-                # Determine result
-                if total < 7:
+                # Determine result: 2-6 = small, 7 = japort, 8-12 = big
+                if 2 <= total <= 6:
                     result_type = 'small'
-                elif total > 7:
-                    result_type = 'big'
-                else:  # total == 7
+                elif total == 7:
                     result_type = 'japort'
+                elif 8 <= total <= 12:
+                    result_type = 'big'
+                else:
+                    result_type = 'unknown'
                 
                 # Get current game
                 game_id = context.user_data.get('awaiting_dice')
@@ -750,7 +753,12 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     result_text = f"🎉ပွဲစဉ် ➖ {game_id}\n"
                     result_text += f"💥🎲Dice ပွဲစဉ်ရလဒ်🎲💥\n"
                     result_text += f"{dice1}+{dice2} = {total}  {result_type.upper()} "
-                    result_text += "{5ဆ}" if result_type == 'japort' else "{2ဆ}\n"
+                    
+                    if result_type == 'japort':
+                        result_text += "{5ဆ}\n"
+                    else:
+                        result_text += "{2ဆ}\n"
+                    
                     result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
                     
                     for winner in winner_list:
@@ -821,7 +829,7 @@ def main():
     application.add_handler(CommandHandler("owner", owner_buttons))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(MessageHandler(filters.DICE, handle_dice))
+    application.add_handler(MessageHandler(filters.Dice.ALL, handle_dice))
     application.add_handler(MessageHandler(filters.PHOTO, handle_message))
     
     # Start bot
