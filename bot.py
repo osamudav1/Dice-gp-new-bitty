@@ -511,10 +511,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='Markdown'
                 )
                 
-                # Schedule auto close after 2 minutes (120 seconds)
+                # Schedule auto close after 0 minutes (30 seconds)
                 context.job_queue.run_once(
                     auto_close_game, 
-                    120,  # 2 minutes in seconds
+                    30,  # 0 minutes in seconds
                     data=game_id,
                     name=f"close_game_{game_id}"
                 )
