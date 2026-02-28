@@ -352,7 +352,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # GAME GROUP - Owner menu buttons (Owner အတွက်သာ)
     if chat.id == GAME_GROUP_ID:
         if user.id == OWNER_ID:
-            print("✅ Game Group Owner - showing 5 main menu buttons")
+            print("✅ Game Group Owner - showing 5 main menu buttons with inline buttons")
             
             # Main Menu Button ၅ ခု (Owner အတွက်သာ)
             keyboard = [
@@ -368,20 +368,50 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 input_field_placeholder="ခလုတ်တစ်ခုကိုနှိပ်ပါ..."
             )
             
+            # Inline Buttons ၅ ခု (အားလုံးမြင်ရပေမယ့် နှိပ်လို့မရ)
+            inline_keyboard = [
+                [InlineKeyboardButton("🎮 Game စတင်ရန်", callback_data='owner_only_start')],
+                [InlineKeyboardButton("⏹️ Game ပိတ်ရန်", callback_data='owner_only_stop')],
+                [InlineKeyboardButton("🔴 Small", callback_data='owner_only_small'),
+                 InlineKeyboardButton("🔵 Big", callback_data='owner_only_big'),
+                 InlineKeyboardButton("🟣 Japort 7", callback_data='owner_only_japort')]
+            ]
+            inline_reply_markup = InlineKeyboardMarkup(inline_keyboard)
+            
+            # Welcome message နဲ့အတူ Inline Buttons ပို့မယ်
             await update.message.reply_text(
-                text="📌 **ပိုင်ရှင် ထိန်းချုပ်ခန်း**\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။",
+                text="👑 **ပိုင်ရှင် ကြိုဆိုပါတယ်**\n\nအောက်ပါခလုတ်များကို သာမန်အသုံးပြုသူများ မြင်ရသော်လည်း နှိပ်၍မရပါ။",
+                reply_markup=inline_reply_markup,
+                parse_mode='Markdown'
+            )
+            
+            # Main Menu Buttons ပို့မယ် (Owner အတွက်သာ)
+            await update.message.reply_text(
+                text="📌 **သင်၏ ထိန်းချုပ်ခန်း ခလုတ်များ**\n\nအောက်ပါခလုတ်များကို သင်သာ မြင်ရပါမည်။",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
-            print("✅ 5 main menu buttons sent to owner")
+            
+            print("✅ 5 main menu buttons + inline buttons sent to owner")
         else:
-            # Normal user in game group - No buttons, just text
+            # Normal user in game group - Inline buttons တွေကိုပဲ ပြမယ်
+            inline_keyboard = [
+                [InlineKeyboardButton("🎮 Game စတင်ရန်", callback_data='user_no_permission')],
+                [InlineKeyboardButton("⏹️ Game ပိတ်ရန်", callback_data='user_no_permission')],
+                [InlineKeyboardButton("🔴 Small", callback_data='user_no_permission'),
+                 InlineKeyboardButton("🔵 Big", callback_data='user_no_permission'),
+                 InlineKeyboardButton("🟣 Japort 7", callback_data='user_no_permission')]
+            ]
+            inline_reply_markup = InlineKeyboardMarkup(inline_keyboard)
+            
             await update.message.reply_text(
-                "🎲 **ကစားရန်**\n\n"
-                "S100 (Small 100)\n"
-                "B100 (Big 100)\n"
-                "J100 (Japort 100)\n\n"
-                "အနည်းဆုံး လောင်းကြေး ၁၀၀ ကျပ်",
+                text="🎲 **ကစားရန်**\n\n"
+                     "S100 (Small 100)\n"
+                     "B100 (Big 100)\n"
+                     "J100 (Japort 100)\n\n"
+                     "အနည်းဆုံး လောင်းကြေး ၁၀၀ ကျပ်\n\n"
+                     "အောက်ပါခလုတ်များသည် ပိုင်ရှင်အတွက်သာဖြစ်ပြီး သင်နှိပ်၍မရပါ။",
+                reply_markup=inline_reply_markup,
                 parse_mode='Markdown'
             )
         return
@@ -436,12 +466,35 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    
-    data = query.data
     user = query.from_user
+    data = query.data
     
     print(f"CALLBACK: {data} from user {user.id}")
+    
+    # Owner-only callback များ
+    if data.startswith('owner_only_'):
+        if user.id == OWNER_ID:
+            # Owner ဖြစ်ရင် ဆက်လုပ်မယ်
+            if data == 'owner_only_start':
+                await query.answer("Game စတင်ရန် ခလုတ်ကို နှိပ်ပါသည်။")
+                # ဒီမှာ Game စတင်ရန် လုပ်ဆောင်ချက်ထည့်နိုင်တယ်
+            elif data == 'owner_only_stop':
+                await query.answer("Game ပိတ်ရန် ခလုတ်ကို နှိပ်ပါသည်။")
+            elif data == 'owner_only_small':
+                await query.answer("Small ခလုတ်ကို နှိပ်ပါသည်။")
+            elif data == 'owner_only_big':
+                await query.answer("Big ခလုတ်ကို နှိပ်ပါသည်။")
+            elif data == 'owner_only_japort':
+                await query.answer("Japort 7 ခလုတ်ကို နှိပ်ပါသည်။")
+        else:
+            # User ဖြစ်ရင် နှိပ်လို့မရဘူးဆိုတဲ့ message ပြမယ်
+            await query.answer("❌ ဤခလုတ်သည် ပိုင်ရှင်အတွက်သာဖြစ်ပြီး သင်နှိပ်၍မရပါ။", show_alert=True)
+        return
+    
+    # User no permission callback
+    if data == 'user_no_permission':
+        await query.answer("❌ ဤခလုတ်သည် ပိုင်ရှင်အတွက်သာဖြစ်ပြီး သင်နှိပ်၍မရပါ။", show_alert=True)
+        return
     
     # ===== USER CALLBACKS =====
     if data == 'account_info':
@@ -1049,7 +1102,8 @@ def main():
     print(f"💰 Deposit Group ID: {DEPOSIT_GROUP_ID}")
     print("=" * 60)
     print("✅ Features:")
-    print("   - Game Group: /start shows 5 buttons (OWNER ONLY)")
+    print("   - Game Group: /start shows 5 main menu buttons (OWNER ONLY)")
+    print("   - Game Group: Inline buttons visible to all but only owner can click")
     print("   - Deposit Group: '1' for user info, +amount/-amount for owner")
     print("   - Owner DM: Welcome Setting & Broadcast")
     print("=" * 60)
