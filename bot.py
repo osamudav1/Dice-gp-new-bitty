@@ -394,6 +394,11 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Owner Control Panel - Main Menu",
             reply_markup=reply_markup
         )
+    else:
+        if chat.id != GAME_GROUP_ID:
+            await update.message.reply_text("This command only works in the game group.")
+        else:
+            await update.message.reply_text("You are not authorized to use this command.")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -607,7 +612,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ===== DEPOSIT GROUP HANDLER =====
     if chat.id == DEPOSIT_GROUP_ID:
-        if text == "0":
+        # User sends "1" to get their info
+        if text == "1":
             user_data = get_user(user.id)
             reply_msg = f"""အမည် - {user_data['name']}
 ID - {user_data['user_id']}
@@ -617,7 +623,9 @@ Mention - {user_data['mention']}
 ယနေ့ထုတ်ငွေ - {user_data['today_withdraw']} ကျပ်
 လက်ကျန်ငွေ - {user_data['balance']} ကျပ်"""
             
+            # Reply to the user's "1" message
             await update.message.reply_to_message.reply_text(reply_msg)
+            return
         
         # Owner reply for deposit/withdraw
         elif update.message.reply_to_message and user.id == OWNER_ID:
