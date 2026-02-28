@@ -380,6 +380,9 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
     
+    print(f"Menu command from user {user.id} in chat {chat.id}")
+    print(f"OWNER_ID: {OWNER_ID}, GAME_GROUP_ID: {GAME_GROUP_ID}")
+    
     # Only work in game group and for owner
     if chat.id == GAME_GROUP_ID and user.id == OWNER_ID:
         # Create reply keyboard markup (main menu buttons, not inline)
@@ -394,7 +397,9 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Owner Control Panel - Main Menu",
             reply_markup=reply_markup
         )
+        print("Menu buttons sent successfully")
     else:
+        print("Access denied: Not in game group or not owner")
         if chat.id != GAME_GROUP_ID:
             await update.message.reply_text("This command only works in the game group.")
         else:
@@ -893,6 +898,9 @@ def main():
     
     # Start bot
     print("Bot started...")
+    print(f"Owner ID: {OWNER_ID}")
+    print(f"Game Group ID: {GAME_GROUP_ID}")
+    print(f"Deposit Group ID: {DEPOSIT_GROUP_ID}")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
