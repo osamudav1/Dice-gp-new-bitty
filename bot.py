@@ -349,12 +349,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mention = f"@{user.username}" if user.username else user.full_name
     create_or_update_user(user.id, user.full_name, mention)
     
-    # GAME GROUP - Owner menu buttons (ပုံထဲကလို ၅ခု)
+    # GAME GROUP - Owner menu buttons (Owner အတွက်သာ)
     if chat.id == GAME_GROUP_ID:
         if user.id == OWNER_ID:
             print("✅ Game Group Owner - showing 5 main menu buttons")
             
-            # ပုံထဲကလို Main Menu Button ၅ ခု
+            # Main Menu Button ၅ ခု (Owner အတွက်သာ)
             keyboard = [
                 [KeyboardButton("🎮 Game စတင်ရန်")],
                 [KeyboardButton("⏹️ Game ပိတ်ရန်")],
@@ -369,13 +369,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             await update.message.reply_text(
-                text="📌 **ဂိမ်းထိန်းချုပ်ခန်း**\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။",
+                text="📌 **ပိုင်ရှင် ထိန်းချုပ်ခန်း**\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
-            print("✅ 5 main menu buttons sent successfully")
+            print("✅ 5 main menu buttons sent to owner")
         else:
-            # Normal user in game group
+            # Normal user in game group - No buttons, just text
             await update.message.reply_text(
                 "🎲 **ကစားရန်**\n\n"
                 "S100 (Small 100)\n"
@@ -553,7 +553,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     print(f"MESSAGE: '{text}' from user {user.id} in chat {chat.id}")
     
-    # ===== GAME GROUP - OWNER BUTTON HANDLER (Game စတင်ရန်, Game ပိတ်ရန်, Small, Big, Japort 7) =====
+    # ===== GAME GROUP - OWNER BUTTON HANDLER (Owner အတွက်သာ) =====
     if chat.id == GAME_GROUP_ID and user.id == OWNER_ID:
         print(f"🔘 Owner button pressed: {text}")
         
@@ -562,11 +562,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if text == "🎮 Game စတင်ရန်" or clean_text == "Game စတင်ရန်":
             game_id = create_game()
-            keyboard = [
-                [InlineKeyboardButton("💰 ငွေသွင်း", url=DEPOSIT_URL)],
-                [InlineKeyboardButton("💳 ငွေထုတ်", url=WITHDRAW_URL)]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
             
             await context.bot.send_message(
                 chat_id=GAME_GROUP_ID,
@@ -574,7 +569,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      f"✅ **စတင်လောင်းလို့ရပါပြီ!**\n"
                      f"➖➖➖➖➖➖➖➖➖➖\n\n"
                      f"**ကစားနည်း:** S100, B100, J100 စသည်ဖြင့်ရိုက်ထည့်ပါ။",
-                reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
             return
@@ -700,57 +694,92 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("✅ Response sent to user")
             return
         
-        # Owner reply for deposit/withdraw
+        # Owner reply for deposit/withdraw - FIXED VERSION
         elif update.message.reply_to_message and user.id == OWNER_ID:
             replied = update.message.reply_to_message
+            print(f"Reply detected: {replied.text}")
+            print(f"Reply from bot: {replied.from_user.id == context.bot.id}")
+            
             if replied.from_user.id == context.bot.id:
-                # Extract user_id from replied message
-                match = re.search(r'ID - `(\d+)`', replied.text)
-                if not match:
-                    match = re.search(r'ID - (\d+)', replied.text)
+                # Extract user_id from replied message using multiple patterns
+                target_user_id = None
                 
+                # Pattern 1: ID - `123456789`
+                match = re.search(r'ID - `(\d+)`', replied.text)
                 if match:
                     target_user_id = match.group(1)
+                    print(f"Found ID with pattern 1: {target_user_id}")
+                
+                # Pattern 2: ID - 123456789
+                if not target_user_id:
+                    match = re.search(r'ID - (\d+)', replied.text)
+                    if match:
+                        target_user_id = match.group(1)
+                        print(f"Found ID with pattern 2: {target_user_id}")
+                
+                # Pattern 3: Just numbers in the message
+                if not target_user_id:
+                    numbers = re.findall(r'\d+', replied.text)
+                    if numbers:
+                        # Take the longest number as ID
+                        target_user_id = max(numbers, key=len)
+                        print(f"Found ID with pattern 3: {target_user_id}")
+                
+                if target_user_id:
+                    print(f"Target user ID: {target_user_id}")
                     
                     if text.startswith('+'):
-                        amount = int(text[1:])
-                        new_balance = update_balance(target_user_id, amount, 'add')
-                        update_today_stats(target_user_id, 'today_deposit', amount)
-                        
-                        user_data = get_user(target_user_id)
-                        keyboard = [[InlineKeyboardButton("🎲 စတင်ကစားနိုင်ပါပြီ", url=GAME_GROUP_URL)]]
-                        reply_markup = InlineKeyboardMarkup(keyboard)
-                        
-                        await update.message.reply_text(
-                            f"✅ **ငွေသွင်းပြီးပါပြီ**\n\n"
-                            f"**အမည်** - {user_data['name']}\n"
-                            f"**ID** - `{target_user_id}`\n"
-                            f"**ထည့်လိုက်တဲ့ငွေ** - {amount} ကျပ်\n"
-                            f"**လက်ကျန်ငွေ** - {new_balance} ကျပ်",
-                            reply_markup=reply_markup,
-                            parse_mode='Markdown'
-                        )
-                        
-                        # Send to game group
-                        await context.bot.send_message(
-                            chat_id=GAME_GROUP_ID,
-                            text=f"👤 {user_data['name']} လူကြီးမင်း၏ ဂိမ်းအကောင့်ထဲသို့ {amount} ကျပ် ထည့်သွင်းပေးလိုက်ပါပြီ။\n🎲 ဂိမ်းစတင်ကစားနိုင်ပါပြီ။"
-                        )
+                        try:
+                            amount = int(text[1:])
+                            print(f"Adding amount: {amount}")
+                            
+                            new_balance = update_balance(target_user_id, amount, 'add')
+                            update_today_stats(target_user_id, 'today_deposit', amount)
+                            
+                            user_data = get_user(target_user_id)
+                            
+                            await update.message.reply_text(
+                                f"✅ **ငွေသွင်းပြီးပါပြီ**\n\n"
+                                f"**အမည်** - {user_data['name']}\n"
+                                f"**ID** - `{target_user_id}`\n"
+                                f"**ထည့်လိုက်တဲ့ငွေ** - {amount} ကျပ်\n"
+                                f"**လက်ကျန်ငွေ** - {new_balance} ကျပ်",
+                                parse_mode='Markdown'
+                            )
+                            
+                            # Send to game group
+                            await context.bot.send_message(
+                                chat_id=GAME_GROUP_ID,
+                                text=f"👤 {user_data['name']} လူကြီးမင်း၏ ဂိမ်းအကောင့်ထဲသို့ {amount} ကျပ် ထည့်သွင်းပေးလိုက်ပါပြီ။\n🎲 ဂိမ်းစတင်ကစားနိုင်ပါပြီ။"
+                            )
+                            print("Deposit completed successfully")
+                        except Exception as e:
+                            print(f"Error in deposit: {e}")
+                            await update.message.reply_text(f"❌ ငွေသွင်းရာတွင် အဆင်မပြေပါ။ {e}")
                     
                     elif text.startswith('-'):
-                        amount = int(text[1:])
-                        new_balance = update_balance(target_user_id, amount, 'subtract')
-                        update_today_stats(target_user_id, 'today_withdraw', amount)
-                        
-                        user_data = get_user(target_user_id)
-                        await update.message.reply_text(
-                            f"✅ **ငွေထုတ်ပြီးပါပြီ**\n\n"
-                            f"**အမည်** - {user_data['name']}\n"
-                            f"**ID** - `{target_user_id}`\n"
-                            f"**ထုတ်လိုက်တဲ့ငွေ** - {amount} ကျပ်\n"
-                            f"**လက်ကျန်ငွေ** - {new_balance} ကျပ်",
-                            parse_mode='Markdown'
-                        )
+                        try:
+                            amount = int(text[1:])
+                            print(f"Withdrawing amount: {amount}")
+                            
+                            new_balance = update_balance(target_user_id, amount, 'subtract')
+                            update_today_stats(target_user_id, 'today_withdraw', amount)
+                            
+                            user_data = get_user(target_user_id)
+                            await update.message.reply_text(
+                                f"✅ **ငွေထုတ်ပြီးပါပြီ**\n\n"
+                                f"**အမည်** - {user_data['name']}\n"
+                                f"**ID** - `{target_user_id}`\n"
+                                f"**ထုတ်လိုက်တဲ့ငွေ** - {amount} ကျပ်\n"
+                                f"**လက်ကျန်ငွေ** - {new_balance} ကျပ်",
+                                parse_mode='Markdown'
+                            )
+                            print("Withdrawal completed successfully")
+                        except Exception as e:
+                            print(f"Error in withdrawal: {e}")
+                            await update.message.reply_text(f"❌ ငွေထုတ်ရာတွင် အဆင်မပြေပါ။ {e}")
+                else:
+                    await update.message.reply_text("❌ User ID ကို ရှာမတွေ့ပါ။")
     
     # ===== GAME GROUP USER BET HANDLER =====
     elif chat.id == GAME_GROUP_ID:
@@ -1020,8 +1049,8 @@ def main():
     print(f"💰 Deposit Group ID: {DEPOSIT_GROUP_ID}")
     print("=" * 60)
     print("✅ Features:")
-    print("   - Game Group: /start for owner menu buttons (Game စတင်ရန်, Game ပိတ်ရန်, Small, Big, Japort 7)")
-    print("   - Deposit Group: '1' for user info (ယနေ့သွင်းငွေ, ယနေ့ထုတ်ငွေ, ယနေ့လောင်းငွေ, လက်ကျန်ငွေ)")
+    print("   - Game Group: /start shows 5 buttons (OWNER ONLY)")
+    print("   - Deposit Group: '1' for user info, +amount/-amount for owner")
     print("   - Owner DM: Welcome Setting & Broadcast")
     print("=" * 60)
     
