@@ -407,6 +407,15 @@ def get_user_bet_count_for_game(user_id, group_id, game_id):
     conn.close()
     return count
 
+def get_all_groups_for_broadcast():
+    """Get all groups where bot is used for broadcast"""
+    conn = sqlite3.connect('bot_database.db')
+    c = conn.cursor()
+    c.execute("SELECT group_id FROM groups")
+    groups = c.fetchall()
+    conn.close()
+    return [group[0] for group in groups]
+
 # ==================== ADMIN FUNCTIONS ====================
 def is_admin(group_id, user_id):
     if user_id == OWNER_ID:
@@ -551,7 +560,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🖼️ Game Start ပုံထည့်", callback_data='set_start_image')],
                 [InlineKeyboardButton("🖼️ Game Stop ပုံထည့်", callback_data='set_stop_image')],
                 [InlineKeyboardButton("🖼️ Result ပုံထည့်", callback_data='set_result_image')],
-                [InlineKeyboardButton("🗑️ ပုံဖျက်ရန်", callback_data='delete_images')]
+                [InlineKeyboardButton("🗑️ ပုံဖျက်ရန်", callback_data='delete_images')],
+                [InlineKeyboardButton("📢 Broadcast", callback_data='broadcast')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
@@ -623,6 +633,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Main Owner အတွက်သာဖြစ်ပါသည်", show_alert=True)
         return
     
+    # Broadcast
+    if data == 'broadcast':
+        await query.answer()
+        await query.edit_message_text(
+            "📢 **Broadcast ပို့ရန်**\n\n"
+            "စာသား (သို့) ဓာတ်ပုံ ပို့ပါ။\n"
+            "ဤအကြောင်းအရာသည် Group အားလုံးသို့ ရောက်ရှိပါမည်။",
+            parse_mode='Markdown'
+        )
+        context.user_data['awaiting_broadcast'] = True
+        return
+    
     # Image settings
     if data == 'set_start_image':
         await query.answer()
@@ -691,7 +713,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🖼️ Game Start ပုံထည့်", callback_data='set_start_image')],
             [InlineKeyboardButton("🖼️ Game Stop ပုံထည့်", callback_data='set_stop_image')],
             [InlineKeyboardButton("🖼️ Result ပုံထည့်", callback_data='set_result_image')],
-            [InlineKeyboardButton("🗑️ ပုံဖျက်ရန်", callback_data='delete_images')]
+            [InlineKeyboardButton("🗑️ ပုံဖျက်ရန်", callback_data='delete_images')],
+            [InlineKeyboardButton("📢 Broadcast", callback_data='broadcast')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
@@ -916,6 +939,59 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ===== PRIVATE CHAT - Owner only =====
     if chat.type == 'private' and user.id == OWNER_ID:
+        # Handle broadcast
+        if 'awaiting_broadcast' in context.user_data:
+            groups = get_all_groups_for_broadcast()
+            if not groups:
+                await update.message.reply_text("❌ Broadcast ပို့ရန် Group မရှိပါ။")
+                del context.user_data['awaiting_broadcast']
+                return
+            
+            photo_id = None
+            caption = text
+            
+            if update.message.photo:
+                photo_id = update.message.photo[-1].file_id
+                caption = update.message.caption or ""
+            
+            await update.message.reply_text(f"📢 Broadcast စတင်နေပါပြီ... Group {len(groups)} ခုသို့ ပို့နေပါသည်။")
+            
+            success_count = 0
+            fail_count = 0
+            
+            for group_id in groups:
+                try:
+                    if photo_id:
+                        await context.bot.send_photo(
+                            chat_id=int(group_id),
+                            photo=photo_id,
+                            caption=caption,
+                            parse_mode='Markdown'
+                        )
+                    else:
+                        await context.bot.send_message(
+                            chat_id=int(group_id),
+                            text=caption,
+                            parse_mode='Markdown'
+                        )
+                    success_count += 1
+                except Exception as e:
+                    print(f"Failed to send to group {group_id}: {e}")
+                    fail_count += 1
+                
+                await asyncio.sleep(0.5)  # Small delay to avoid flooding
+            
+            await update.message.reply_text(
+                f"✅ **Broadcast ပြီးဆုံးပါပြီ**\n\n"
+                f"အောင်မြင်သော Group: {success_count}\n"
+                f"မအောင်မြင်သော Group: {fail_count}",
+                parse_mode='Markdown'
+            )
+            
+            del context.user_data['awaiting_broadcast']
+            return
+        
+        # Handle image uploads
         if 'awaiting_image' in context.user_data:
             if update.message.photo:
                 image_type = context.user_data['awaiting_image']
@@ -934,6 +1010,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ ပုံကိုသာ ပို့ပါ။")
             return
         
+        # Handle admin addition
         if 'adding_admin' in context.user_data:
             try:
                 admin_id = int(text.strip())
@@ -965,6 +1042,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del context.user_data['adding_admin']
             return
         
+        # Handle admin removal
         if 'removing_admin' in context.user_data:
             try:
                 admin_id = int(text.strip())
@@ -979,6 +1057,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del context.user_data['removing_admin']
             return
         
+        # Handle restore file upload
         if 'awaiting_restore' in context.user_data:
             if update.message.document:
                 file = await update.message.document.get_file()
@@ -1223,7 +1302,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 result_text += "❌ အနိုင်ရသူမရှိပါ\n"
             
-            # Send result to group
+            # Send result to group IMMEDIATELY
             custom_image = get_game_image('game_result')
             if custom_image:
                 await context.bot.send_photo(
@@ -1297,13 +1376,17 @@ def main():
     print("   • Bot sends one dice only")
     print("   • Owner gets profit report in DM")
     print("=" * 60)
-    print("🎲 DICE FLOW:")
+    print("🎲 DICE FLOW (FIXED):")
     print("   1. Admin stops game")
     print("   2. Bot sends dice")
     print("   3. Waits for dice to stop rolling")
-    print("   4. Calculates results immediately")
+    print("   4. IMMEDIATELY calculates results")
     print("   5. Shows winners and updates balances")
     print("   6. Sends owner report via DM")
+    print("=" * 60)
+    print("📢 BROADCAST:")
+    print("   • Sends to ALL groups where bot is added")
+    print("   • Text or Photo supported")
     print("=" * 60)
     
     app.run_polling()
