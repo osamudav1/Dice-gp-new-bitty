@@ -267,20 +267,7 @@ async def auto_close_game(context: ContextTypes.DEFAULT_TYPE):
         print(f"Game {game_id} already closed")
         return
     
-    # 1. CLOSE CHAT PERMISSIONS FIRST
-    await context.bot.set_chat_permissions(
-        chat_id=GAME_GROUP_ID,
-        permissions=ChatPermissions(
-            can_send_messages=False,
-            can_send_media_messages=False,
-            can_send_polls=False,
-            can_send_other_messages=False,
-            can_add_web_page_previews=False
-        )
-    )
-    print("✅ Chat closed")
-    
-    # 2. GET BETS AND SHOW LIST
+    # 1. GET BETS AND SHOW LIST
     bets = get_game_bets(game_id)
     
     summary = f"✨ **ပွဲစဉ်** ➖ `{game_id}`\n"
@@ -296,7 +283,7 @@ async def auto_close_game(context: ContextTypes.DEFAULT_TYPE):
     
     await context.bot.send_message(chat_id=GAME_GROUP_ID, text=summary, parse_mode='Markdown')
     
-    # 3. ASK FOR DICE
+    # 2. ASK FOR DICE
     await asyncio.sleep(1)
     await context.bot.send_message(
         chat_id=GAME_GROUP_ID,
@@ -304,7 +291,7 @@ async def auto_close_game(context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
     
-    # 4. STORE GAME ID
+    # 3. STORE GAME ID
     context.chat_data['awaiting_dice'] = game_id
     print(f"✅ Auto close done")
 
@@ -549,6 +536,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_data = get_user(target_user_id)
                 if user_data:
                     context.user_data['target_user_id'] = target_user_id
+                    
+                    # SHOW USER INFO BEFORE ASKING AMOUNT
                     await update.message.reply_text(
                         f"👤 **အသုံးပြုသူ အချက်အလက်**\n"
                         f"အမည်: {user_data['name']}\n"
@@ -577,6 +566,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 target_id = context.user_data['target_user_id']
                 user_data = get_user(target_id)
                 
+                # Get previous balance before update
+                prev_balance = user_data['balance']
+                
                 if action == 'add':
                     new_balance = update_balance(target_id, amount, 'add')
                     update_today_stats(target_id, 'today_deposit', amount)
@@ -590,17 +582,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     emoji = "💸"
                     gp_message = f"🧊 {user_data['name']} သင်ထုတ်ယူငွေ {amount:,} ကျပ်ကို သင့် KPay/Wave အကောင့်ထဲသို့ လွဲပေးပြီးပါပြီ။ စစ်ဆေးပေးပါ။ 🧊"
                 
-                # Send to owner
+                # Send detailed info to owner
                 await update.message.reply_text(
                     f"✅ **{action_text}ပြီးပါပြီ**\n\n"
                     f"👤 **အမည်:** {user_data['name']}\n"
                     f"🆔 **ID:** `{target_id}`\n"
-                    f"💵 **{action_text}ငွေ:** {amount:,} ကျပ်\n"
+                    f"📢 **Mention:** {user_data['mention']}\n"
+                    f"💵 **အရင်လက်ကျန်:** {prev_balance:,} ကျပ်\n"
+                    f"💰 **{action_text}ငွေ:** {amount:,} ကျပ်\n"
                     f"💳 **လက်ကျန်အသစ်:** {new_balance:,} ကျပ်",
                     parse_mode='Markdown'
                 )
                 
-                # Send to game group
+                # Send notification to game group
                 await context.bot.send_message(
                     chat_id=GAME_GROUP_ID,
                     text=gp_message
@@ -722,12 +716,6 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # Close game
                     close_game(game_id)
                     
-                    # Reopen permissions
-                    await context.bot.set_chat_permissions(
-                        chat_id=GAME_GROUP_ID,
-                        permissions=ChatPermissions(can_send_messages=True)
-                    )
-                    
                     # Clear all data
                     context.chat_data.clear()
                     print(f"✅ Game {game_id} completed")
@@ -752,18 +740,17 @@ def main():
     print("=" * 60)
     print("✅ GAME GROUP FEATURES:")
     print("   - Game start → 60 sec timer")
-    print("   - Timer up → Chat CLOSED first")
-    print("   → Bet list displayed")
+    print("   - Timer up → Bet list displayed")
     print("   → 2 dice requested")
     print("   → Owner rolls dice")
     print("   → Auto calculate winners")
     print("   → Update balances")
-    print("   → Chat REOPENED")
     print("=" * 60)
     print("✅ OWNER DM FEATURES:")
     print("   - Game start button")
-    print("   - Add MMK: Click → Enter User ID → Enter Amount")
-    print("   - Remove MMK: Click → Enter User ID → Enter Amount")
+    print("   - Add MMK: Click → Enter User ID → See user info → Enter Amount")
+    print("   - Remove MMK: Click → Enter User ID → See user info → Enter Amount")
+    print("   - Shows: ID / Mention / Previous balance / Added amount / New balance")
     print("   - Auto sends to Game Group")
     print("=" * 60)
     
