@@ -19,7 +19,7 @@ from telegram.ext import (
 # ==================== CONFIGURATION ====================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 OWNER_ID = int(os.environ.get("OWNER_ID", "123456789"))
-GAME_GROUP_ID = int(os.environ.get("GAME_GROUP_ID", "-1001234567890"))  # Single group ID
+GAME_GROUP_ID = int(os.environ.get("GAME_GROUP_ID", "-1001234567890"))
 GAME_GROUP_URL = "https://t.me/your_game_group"
 
 # ==================== DATABASE SETUP ====================
@@ -281,7 +281,6 @@ def create_backup():
         'timestamp': datetime.now().isoformat()
     }
     
-    # Get users
     c.execute("SELECT * FROM users")
     users = c.fetchall()
     for user in users:
@@ -294,7 +293,6 @@ def create_backup():
             'balance': user[5]
         })
     
-    # Get games
     c.execute("SELECT * FROM games")
     games = c.fetchall()
     for game in games:
@@ -310,7 +308,6 @@ def create_backup():
             'closed_at': str(game[8]) if game[8] else None
         })
     
-    # Get bets
     c.execute("SELECT * FROM bets")
     bets = c.fetchall()
     for bet in bets:
@@ -341,22 +338,18 @@ def restore_backup(file_path):
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
     
-    # Clear existing data
     c.execute("DELETE FROM bets")
     c.execute("DELETE FROM games")
     c.execute("DELETE FROM users")
     
-    # Restore users
     for user in backup_data['users']:
         c.execute("INSERT INTO users (user_id, name, mention, total_bet, total_win, balance) VALUES (?, ?, ?, ?, ?, ?)",
                   (user['user_id'], user['name'], user['mention'], user['total_bet'], user['total_win'], user['balance']))
     
-    # Restore games
     for game in backup_data['games']:
         c.execute("INSERT INTO games (id, game_id, status, result_number, total_bet_amount, total_win_amount, owner_profit, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   (game['id'], game['game_id'], game['status'], game['result_number'], game['total_bet_amount'], game['total_win_amount'], game['owner_profit'], game['created_at'], game['closed_at']))
     
-    # Restore bets
     for bet in backup_data['bets']:
         c.execute("INSERT INTO bets (id, game_id, user_id, bet_number, amount, status, win_amount, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                   (bet['id'], bet['game_id'], bet['user_id'], bet['bet_number'], bet['amount'], bet['status'], bet['win_amount'], bet['timestamp']))
@@ -402,7 +395,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mention = f"@{user.username}" if user.username else user.full_name
     create_or_update_user(user.id, user.full_name, mention)
     
-    # GAME GROUP - Only this specific group
+    # GAME GROUP
     if chat.id == GAME_GROUP_ID:
         if user.id == OWNER_ID:
             keyboard = [
@@ -666,23 +659,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
             
-            # Prepare for dice
-            await asyncio.sleep(1)
-            dice_msg = await context.bot.send_message(
+            # Ask owner to send dice
+            await context.bot.send_message(
                 chat_id=GAME_GROUP_ID,
-                text="🎲 **အံစာတုံး စလှည့်ပါတော့မယ်...**\n\nခဏစောင့်ပါ။",
+                text="🎲 **ပိုင်ရှင်သို့ အကြောင်းကြားချက်**\n\n"
+                     "ကျေးဇူးပြု၍ အံစာတုံး ၁ တုံး ပို့ပေးပါ။\n"
+                     "အံစာတုံးလှည့်ပြီး ရပ်သွားမှသာ ရလဒ်ကိုတွက်ချက်ပါမည်။",
                 parse_mode='Markdown'
             )
-            await asyncio.sleep(2)
-            await dice_msg.delete()
             
-            # Store game ID in bot_data (persistent across updates)
-            if 'current_game_id' not in context.bot_data:
-                context.bot_data['current_game_id'] = None
+            # Store game ID in bot_data
             context.bot_data['current_game_id'] = game_id
-            
-            # Bot sends dice
-            await context.bot.send_dice(chat_id=GAME_GROUP_ID, emoji='🎲')
+            context.bot_data['awaiting_dice'] = True
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -895,16 +883,22 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     
     if chat.id == GAME_GROUP_ID:
-        # Only process dice sent by bot
-        if user.id == context.bot.id:
+        # Only process dice sent by owner
+        if user.id == OWNER_ID and update.message.dice:
+            # Check if we're expecting dice
+            if not context.bot_data.get('awaiting_dice'):
+                await update.message.reply_text("❌ ယခုအချိန်တွင် အံစာတုံးမလိုအပ်ပါ။")
+                return
+            
             dice_value = update.message.dice.value
-            print(f"🎲 BOT DICE: {dice_value} in game group")
+            print(f"🎲 OWNER DICE: {dice_value} in game group")
             
             # Get game_id from bot_data
             game_id = context.bot_data.get('current_game_id')
             
             if not game_id:
                 print(f"❌ No current game found")
+                await update.message.reply_text("❌ ဂိမ်းမရှိပါ။")
                 return
             
             print(f"✅ Found game {game_id}")
@@ -947,7 +941,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 result_text += "❌ အနိုင်ရသူမရှိပါ\n"
             
-            # Send result to group IMMEDIATELY
+            # Send result to group
             custom_image = get_game_image('game_result')
             if custom_image:
                 await context.bot.send_photo(
@@ -991,6 +985,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Clear current game
             context.bot_data['current_game_id'] = None
+            context.bot_data['awaiting_dice'] = False
             print(f"✅ Game {game_id} completed")
 
 # ==================== MAIN ====================
@@ -1023,8 +1018,11 @@ def main():
     print("   1. Owner starts game")
     print("   2. Users bet")
     print("   3. Owner stops game")
-    print("   4. Bot sends dice")
-    print("   5. IMMEDIATELY shows results")
+    print("   4. Bot asks owner to send dice")
+    print("   5. Owner sends dice")
+    print("   6. Bot calculates results")
+    print("   7. Shows winners and updates balances")
+    print("   8. Sends owner report via DM")
     print("=" * 60)
     
     app.run_polling()
