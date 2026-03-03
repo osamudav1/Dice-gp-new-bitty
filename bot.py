@@ -427,18 +427,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
         else:
-            # Normal users see instructions with deposit/withdraw buttons
+            # Normal users see instructions
             text = "🎲 **ကစားရန်**\n\n" \
                    "S100 (Small 100)\n" \
                    "B100 (Big 100)\n" \
                    "J100 (Japort 100)\n\n" \
                    "အနည်းဆုံး ၂၀၀ကျပ်\n" \
-                   "အများဆုံး ၁၀၀၀ကျပ်\n\n" \
-                   f"{get_warning_text()}"
+                   "အများဆုံး ၁၀၀၀ကျပ်"
             
             await update.message.reply_text(
                 text=text,
-                reply_markup=get_deposit_withdraw_buttons(),
                 parse_mode='Markdown'
             )
         return
@@ -507,15 +505,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             game_id = create_game()
             
             text = f"**ပွဲစဉ်** - `{game_id}`\n" \
-                   f"**စတင်လောင်းလို့ရပါပြီ**\n\n" \
-                   f"{get_warning_text()}"
+                   f"**စတင်လောင်းလို့ရပါပြီ**"
             
             await context.bot.send_message(
                 chat_id=GAME_GROUP_ID,
                 text=text,
+                parse_mode='Markdown'
+            )
+            
+            # Send warning as separate message
+            await context.bot.send_message(
+                chat_id=GAME_GROUP_ID,
+                text=get_warning_text(),
                 reply_markup=get_deposit_withdraw_buttons(),
                 parse_mode='Markdown'
             )
+            
             await query.message.reply_text("✅ ဂိမ်းစတင်ပြီးပါပြီ")
         
         elif data == 'owner_game_stop':
@@ -543,11 +548,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 summary += "❌ လောင်းကြေးမရှိပါ\n"
             
-            summary += f"\n{get_warning_text()}"
-            
             await context.bot.send_message(
                 chat_id=GAME_GROUP_ID, 
                 text=summary, 
+                parse_mode='Markdown'
+            )
+            
+            # Send warning as separate message
+            await context.bot.send_message(
+                chat_id=GAME_GROUP_ID,
+                text=get_warning_text(),
                 reply_markup=get_deposit_withdraw_buttons(),
                 parse_mode='Markdown'
             )
@@ -680,15 +690,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         game_id = create_game()
         
         text = f"**ပွဲစဉ်** - `{game_id}`\n" \
-               f"**စတင်လောင်းလို့ရပါပြီ**\n\n" \
-               f"{get_warning_text()}"
+               f"**စတင်လောင်းလို့ရပါပြီ**"
         
         await context.bot.send_message(
             chat_id=GAME_GROUP_ID,
             text=text,
+            parse_mode='Markdown'
+        )
+        
+        # Send warning as separate message
+        await context.bot.send_message(
+            chat_id=GAME_GROUP_ID,
+            text=get_warning_text(),
             reply_markup=get_deposit_withdraw_buttons(),
             parse_mode='Markdown'
         )
+        
         await query.message.reply_text("✅ ဂိမ်းစတင်ပြီးပါပြီ")
     
     elif data == 'game_stop' and user.id == OWNER_ID:
@@ -716,11 +733,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             summary += "❌ လောင်းကြေးမရှိပါ\n"
         
-        summary += f"\n{get_warning_text()}"
-        
         await context.bot.send_message(
             chat_id=GAME_GROUP_ID, 
             text=summary, 
+            parse_mode='Markdown'
+        )
+        
+        # Send warning as separate message
+        await context.bot.send_message(
+            chat_id=GAME_GROUP_ID,
+            text=get_warning_text(),
             reply_markup=get_deposit_withdraw_buttons(),
             parse_mode='Markdown'
         )
@@ -1057,6 +1079,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if 'dice1' not in context.chat_data:
                 context.chat_data['dice1'] = dice_value
+                context.chat_data['dice1_msg_id'] = update.message.message_id
                 dice_msg = await context.bot.send_message(
                     chat_id=GAME_GROUP_ID,
                     text="🎲 **နောက်တစ်ခါထပ်ပို့ပါ**",
@@ -1067,6 +1090,9 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             elif 'dice2' not in context.chat_data:
                 context.chat_data['dice2'] = dice_value
+                context.chat_data['dice2_msg_id'] = update.message.message_id
+                
+                # Both dice received, calculate result
                 dice1 = context.chat_data['dice1']
                 dice2 = dice_value
                 total = dice1 + dice2
@@ -1110,11 +1136,16 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else:
                         msg += "❌ အနိုင်ရသူမရှိပါ\n"
                     
-                    msg += f"\n{get_warning_text()}"
-                    
                     await context.bot.send_message(
                         chat_id=GAME_GROUP_ID,
                         text=msg,
+                        parse_mode='Markdown'
+                    )
+                    
+                    # Send warning as separate message with buttons
+                    await context.bot.send_message(
+                        chat_id=GAME_GROUP_ID,
+                        text=get_warning_text(),
                         reply_markup=get_deposit_withdraw_buttons(),
                         parse_mode='Markdown'
                     )
