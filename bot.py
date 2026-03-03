@@ -31,9 +31,8 @@ def init_db():
                  (user_id TEXT PRIMARY KEY,
                   name TEXT,
                   mention TEXT,
-                  today_deposit INTEGER DEFAULT 0,
-                  today_withdraw INTEGER DEFAULT 0,
-                  today_bet INTEGER DEFAULT 0,
+                  total_bet INTEGER DEFAULT 0,
+                  total_win INTEGER DEFAULT 0,
                   balance INTEGER DEFAULT 0)''')
     
     # Games table
@@ -42,7 +41,10 @@ def init_db():
                   game_id INTEGER UNIQUE,
                   group_id TEXT,
                   status TEXT,
-                  result TEXT,
+                  result_number INTEGER,
+                  total_bet_amount INTEGER DEFAULT 0,
+                  total_win_amount INTEGER DEFAULT 0,
+                  owner_profit INTEGER DEFAULT 0,
                   created_at TIMESTAMP,
                   closed_at TIMESTAMP)''')
     
@@ -52,9 +54,10 @@ def init_db():
                   game_id INTEGER,
                   group_id TEXT,
                   user_id TEXT,
-                  bet_type TEXT,
+                  bet_number INTEGER,
                   amount INTEGER,
                   status TEXT,
+                  win_amount INTEGER DEFAULT 0,
                   timestamp TIMESTAMP)''')
     
     # Admins table
@@ -86,7 +89,6 @@ def init_db():
 
 # ==================== IMAGE FUNCTIONS ====================
 def save_game_image(image_type, photo_id, updated_by):
-    """Save custom game image"""
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO game_images (image_type, photo_id, updated_by, updated_at) VALUES (?, ?, ?, ?)",
@@ -95,7 +97,6 @@ def save_game_image(image_type, photo_id, updated_by):
     conn.close()
 
 def get_game_image(image_type):
-    """Get custom game image"""
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
     c.execute("SELECT photo_id FROM game_images WHERE image_type = ? ORDER BY updated_at DESC LIMIT 1", (image_type,))
@@ -104,7 +105,6 @@ def get_game_image(image_type):
     return result[0] if result else None
 
 def delete_game_image(image_type):
-    """Delete custom game image"""
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
     c.execute("DELETE FROM game_images WHERE image_type = ?", (image_type,))
@@ -113,7 +113,6 @@ def delete_game_image(image_type):
 
 # ==================== BACKUP FUNCTIONS ====================
 def create_group_backup(group_id):
-    """Create backup for specific group"""
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
     
@@ -126,14 +125,12 @@ def create_group_backup(group_id):
         'timestamp': datetime.now().isoformat()
     }
     
-    # Get group info
     c.execute("SELECT group_name, group_link FROM groups WHERE group_id = ?", (str(group_id),))
     group_info = c.fetchone()
     if group_info:
         backup_data['group_name'] = group_info[0]
         backup_data['group_link'] = group_info[1]
     
-    # Get users who have bets in this group
     c.execute("SELECT DISTINCT user_id FROM bets WHERE group_id = ?", (str(group_id),))
     user_ids = c.fetchall()
     for (uid,) in user_ids:
@@ -144,13 +141,11 @@ def create_group_backup(group_id):
                 'user_id': user[0],
                 'name': user[1],
                 'mention': user[2],
-                'today_deposit': user[3],
-                'today_withdraw': user[4],
-                'today_bet': user[5],
-                'balance': user[6]
+                'total_bet': user[3],
+                'total_win': user[4],
+                'balance': user[5]
             })
     
-    # Get games for this group
     c.execute("SELECT * FROM games WHERE group_id = ?", (str(group_id),))
     games = c.fetchall()
     for game in games:
@@ -159,12 +154,14 @@ def create_group_backup(group_id):
             'game_id': game[1],
             'group_id': game[2],
             'status': game[3],
-            'result': game[4],
-            'created_at': str(game[5]),
-            'closed_at': str(game[6]) if game[6] else None
+            'result_number': game[4],
+            'total_bet_amount': game[5],
+            'total_win_amount': game[6],
+            'owner_profit': game[7],
+            'created_at': str(game[8]),
+            'closed_at': str(game[9]) if game[9] else None
         })
     
-    # Get bets for this group
     c.execute("SELECT * FROM bets WHERE group_id = ?", (str(group_id),))
     bets = c.fetchall()
     for bet in bets:
@@ -173,13 +170,13 @@ def create_group_backup(group_id):
             'game_id': bet[1],
             'group_id': bet[2],
             'user_id': bet[3],
-            'bet_type': bet[4],
+            'bet_number': bet[4],
             'amount': bet[5],
             'status': bet[6],
-            'timestamp': str(bet[7])
+            'win_amount': bet[7],
+            'timestamp': str(bet[8])
         })
     
-    # Get admins for this group
     c.execute("SELECT user_id FROM admins WHERE group_id = ?", (str(group_id),))
     admins = c.fetchall()
     for (admin_id,) in admins:
@@ -187,7 +184,6 @@ def create_group_backup(group_id):
     
     conn.close()
     
-    # Save to file
     filename = f"backup_group_{group_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(backup_data, f, ensure_ascii=False, indent=2)
@@ -195,39 +191,32 @@ def create_group_backup(group_id):
     return filename
 
 def restore_group_backup(group_id, file_path):
-    """Restore backup for specific group"""
     with open(file_path, 'r', encoding='utf-8') as f:
         backup_data = json.load(f)
     
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
     
-    # Check if backup is for this group
     if str(backup_data['group_id']) != str(group_id):
         conn.close()
         return False, "Backup file is for different group"
     
-    # Clear existing data for this group
     c.execute("DELETE FROM bets WHERE group_id = ?", (str(group_id),))
     c.execute("DELETE FROM games WHERE group_id = ?", (str(group_id),))
     c.execute("DELETE FROM admins WHERE group_id = ?", (str(group_id),))
     
-    # Restore users (update their balances)
     for user in backup_data['users']:
-        c.execute("INSERT OR REPLACE INTO users (user_id, name, mention, today_deposit, today_withdraw, today_bet, balance) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                  (user['user_id'], user['name'], user['mention'], user['today_deposit'], user['today_withdraw'], user['today_bet'], user['balance']))
+        c.execute("INSERT OR REPLACE INTO users (user_id, name, mention, total_bet, total_win, balance) VALUES (?, ?, ?, ?, ?, ?)",
+                  (user['user_id'], user['name'], user['mention'], user['total_bet'], user['total_win'], user['balance']))
     
-    # Restore games
     for game in backup_data['games']:
-        c.execute("INSERT INTO games (id, game_id, group_id, status, result, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                  (game['id'], game['game_id'], game['group_id'], game['status'], game['result'], game['created_at'], game['closed_at']))
+        c.execute("INSERT INTO games (id, game_id, group_id, status, result_number, total_bet_amount, total_win_amount, owner_profit, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  (game['id'], game['game_id'], game['group_id'], game['status'], game['result_number'], game['total_bet_amount'], game['total_win_amount'], game['owner_profit'], game['created_at'], game['closed_at']))
     
-    # Restore bets
     for bet in backup_data['bets']:
-        c.execute("INSERT INTO bets (id, game_id, group_id, user_id, bet_type, amount, status, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                  (bet['id'], bet['game_id'], bet['group_id'], bet['user_id'], bet['bet_type'], bet['amount'], bet['status'], bet['timestamp']))
+        c.execute("INSERT INTO bets (id, game_id, group_id, user_id, bet_number, amount, status, win_amount, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  (bet['id'], bet['game_id'], bet['group_id'], bet['user_id'], bet['bet_number'], bet['amount'], bet['status'], bet['win_amount'], bet['timestamp']))
     
-    # Restore admins
     for admin_id in backup_data['admins']:
         c.execute("INSERT INTO admins (group_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)",
                   (str(group_id), admin_id, str(OWNER_ID), datetime.now()))
@@ -258,10 +247,9 @@ def get_user(user_id):
             'user_id': user[0],
             'name': user[1],
             'mention': user[2],
-            'today_deposit': user[3],
-            'today_withdraw': user[4],
-            'today_bet': user[5],
-            'balance': user[6]
+            'total_bet': user[3],
+            'total_win': user[4],
+            'balance': user[5]
         }
     return None
 
@@ -286,10 +274,11 @@ def update_balance(user_id, amount, operation='add'):
     conn.close()
     return new_balance
 
-def update_today_stats(user_id, field, amount):
+def update_user_stats(user_id, bet_amount, win_amount=0):
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
-    c.execute(f"UPDATE users SET {field} = {field} + ? WHERE user_id = ?", (amount, str(user_id)))
+    c.execute("UPDATE users SET total_bet = total_bet + ?, total_win = total_win + ? WHERE user_id = ?",
+              (bet_amount, win_amount, str(user_id)))
     conn.commit()
     conn.close()
 
@@ -306,9 +295,12 @@ def get_current_game(group_id):
             'game_id': game[1],
             'group_id': game[2],
             'status': game[3],
-            'result': game[4],
-            'created_at': game[5],
-            'closed_at': game[6]
+            'result_number': game[4],
+            'total_bet_amount': game[5],
+            'total_win_amount': game[6],
+            'owner_profit': game[7],
+            'created_at': game[8],
+            'closed_at': game[9]
         }
     return None
 
@@ -316,28 +308,33 @@ def create_game(group_id):
     game_id = get_next_game_id(group_id)
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
-    c.execute("INSERT INTO games (game_id, group_id, status, created_at) VALUES (?, ?, 'open', ?)",
+    c.execute("INSERT INTO games (game_id, group_id, status, total_bet_amount, total_win_amount, owner_profit, created_at) VALUES (?, ?, 'open', 0, 0, 0, ?)",
               (game_id, str(group_id), datetime.now()))
     conn.commit()
     conn.close()
     return game_id
 
-def close_game(group_id, game_id):
+def close_game(group_id, game_id, result_number, total_win_amount, owner_profit):
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
-    c.execute("UPDATE games SET status = 'closed', closed_at = ? WHERE group_id = ? AND game_id = ?",
-              (datetime.now(), str(group_id), game_id))
+    c.execute("UPDATE games SET status = 'closed', result_number = ?, total_win_amount = ?, owner_profit = ?, closed_at = ? WHERE group_id = ? AND game_id = ?",
+              (result_number, total_win_amount, owner_profit, datetime.now(), str(group_id), game_id))
     conn.commit()
     conn.close()
 
-def save_bet(group_id, game_id, user_id, bet_type, amount):
+def save_bet(group_id, game_id, user_id, bet_number, amount):
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
-    c.execute("INSERT INTO bets (game_id, group_id, user_id, bet_type, amount, status, timestamp) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
-              (game_id, str(group_id), str(user_id), bet_type, amount, datetime.now()))
+    c.execute("INSERT INTO bets (game_id, group_id, user_id, bet_number, amount, status, timestamp) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+              (game_id, str(group_id), str(user_id), bet_number, amount, datetime.now()))
+    
+    # Update game total bet amount
+    c.execute("UPDATE games SET total_bet_amount = total_bet_amount + ? WHERE group_id = ? AND game_id = ?",
+              (amount, str(group_id), game_id))
+    
     conn.commit()
     conn.close()
-    update_today_stats(user_id, 'today_bet', amount)
+    update_user_stats(user_id, amount, 0)
 
 def get_game_bets(group_id, game_id):
     conn = sqlite3.connect('bot_database.db')
@@ -354,32 +351,39 @@ def get_game_bets(group_id, game_id):
             'game_id': bet[1],
             'group_id': bet[2],
             'user_id': bet[3],
-            'bet_type': bet[4],
+            'bet_number': bet[4],
             'amount': bet[5],
             'status': bet[6],
+            'win_amount': bet[7],
             'user_name': user['name'] if user else 'Unknown'
         })
     return result
 
-def update_bet_results(group_id, game_id, result_type):
+def update_bet_results(group_id, game_id, result_number):
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
     c.execute("SELECT * FROM bets WHERE group_id = ? AND game_id = ?", (str(group_id), game_id))
     bets = c.fetchall()
     
     winners = []
-    losers = []
+    total_win_amount = 0
+    
     for bet in bets:
-        if bet[4] == result_type:
-            c.execute("UPDATE bets SET status = 'won' WHERE id = ?", (bet[0],))
+        if bet[4] == result_number:  # bet_number matches result
+            win_amount = bet[5] * result_number  # amount * result_number
+            c.execute("UPDATE bets SET status = 'won', win_amount = ? WHERE id = ?", (win_amount, bet[0]))
             winners.append(bet)
+            total_win_amount += win_amount
+            
+            # Update user stats
+            user_id = bet[3]
+            c.execute("UPDATE users SET total_win = total_win + ? WHERE user_id = ?", (win_amount, str(user_id)))
         else:
-            c.execute("UPDATE bets SET status = 'lost' WHERE id = ?", (bet[0],))
-            losers.append(bet)
+            c.execute("UPDATE bets SET status = 'lost', win_amount = 0 WHERE id = ?", (bet[0],))
     
     conn.commit()
     conn.close()
-    return winners, losers
+    return winners, total_win_amount
 
 def get_user_bets(user_id, group_id=None, game_id=None):
     conn = sqlite3.connect('bot_database.db')
@@ -395,6 +399,15 @@ def get_user_bets(user_id, group_id=None, game_id=None):
     bets = c.fetchall()
     conn.close()
     return bets
+
+def get_user_bet_count_for_game(user_id, group_id, game_id):
+    conn = sqlite3.connect('bot_database.db')
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM bets WHERE user_id = ? AND group_id = ? AND game_id = ?",
+              (str(user_id), str(group_id), game_id))
+    count = c.fetchone()[0]
+    conn.close()
+    return count
 
 # ==================== ADMIN FUNCTIONS ====================
 def is_admin(group_id, user_id):
@@ -462,21 +475,16 @@ def add_group(group_id, group_name, group_link, added_by):
 # ==================== UTILITY FUNCTIONS ====================
 def parse_bet(text):
     text = text.lower().strip()
+    # Pattern: 1 1000, 2 500, 3 200, etc.
     patterns = [
-        (r'^s(\d+)$', 'small'), (r'^b(\d+)$', 'big'), (r'^j(\d+)$', 'japort'),
-        (r'^jp(\d+)$', 'japort'), (r'^small(\d+)$', 'small'), (r'^big(\d+)$', 'big'),
-        (r'^japort(\d+)$', 'japort'), (r'^small (\d+)$', 'small'),
-        (r'^big (\d+)$', 'big'), (r'^japort (\d+)$', 'japort'),
+        (r'^1 (\d+)$', 1), (r'^2 (\d+)$', 2), (r'^3 (\d+)$', 3),
+        (r'^4 (\d+)$', 4), (r'^5 (\d+)$', 5), (r'^6 (\d+)$', 6),
     ]
-    for pattern, bet_type in patterns:
+    for pattern, number in patterns:
         match = re.match(pattern, text)
         if match:
-            return bet_type, int(match.group(1))
+            return number, int(match.group(1))
     return None, None
-
-def has_both_small_big(text):
-    text = text.lower()
-    return ('s' in text or 'small' in text) and ('b' in text or 'big' in text)
 
 # ==================== BUTTONS ====================
 def get_deposit_withdraw_buttons(admin_username="osamu1123"):
@@ -502,7 +510,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     create_or_update_user(user.id, user.full_name, mention)
     
     if chat.type in ['group', 'supergroup']:
-        # Add group to database
         group_link = f"https://t.me/{chat.username}" if chat.username else None
         add_group(chat.id, chat.title, group_link, user.id)
         
@@ -520,12 +527,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
         else:
-            text = "🎲 **ကစားရန်**\n\n" \
-                   "S200 (Small 200)\n" \
-                   "B500 (Big 500)\n" \
-                   "J1000 (Japort 1000)\n\n" \
+            text = "🎲 **ကစားနည်းအသစ်**\n\n" \
+                   "နံပါတ်ရွေးပြီး လောင်းကြေးတင်ပါ။\n\n" \
+                   "ဥပမာ:\n" \
+                   "`1 1000` - နံပါတ် 1 ကို 1000 ကျပ်လောင်း\n" \
+                   "`2 500` - နံပါတ် 2 ကို 500 ကျပ်လောင်း\n" \
+                   "`3 200` - နံပါတ် 3 ကို 200 ကျပ်လောင်း\n\n" \
                    "အနည်းဆုံး ၂၀၀ကျပ်\n" \
-                   "အများဆုံး ၁၀၀၀ကျပ်\n\n" \
+                   "အများဆုံး ၁၀၀၀ကျပ်\n" \
+                   "တစ်ယောက် တစ်ခါသာလောင်းရမည်\n\n" \
                    "**သတိပြုရန်:** Bot ရဲ့စာကို Reply လုပ်ပြီးမှသာ လောင်းကြေးတင်ရမည်။"
             
             await update.message.reply_text(
@@ -564,7 +574,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 async def show_groups_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show list of all groups with management buttons"""
     groups = get_all_groups()
     
     if not groups:
@@ -699,16 +708,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group_id = data.replace('backup_group_', '')
         await query.answer()
         
-        # Check if game is open
         current_game = get_current_game(group_id)
         if current_game:
             await query.message.reply_text("❌ ဤအုပ်စုတွင် ဂိမ်းအဖွင့်ရှိနေပါသည်။ ဂိမ်းပြီးမှသာ Backup လုပ်ပါ။")
             return
         
-        # Create backup
         filename = create_group_backup(group_id)
         
-        # Send file
         with open(filename, 'rb') as f:
             await context.bot.send_document(
                 chat_id=user.id,
@@ -726,7 +732,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group_id = data.replace('restore_group_', '')
         await query.answer()
         
-        # Check if game is open
         current_game = get_current_game(group_id)
         if current_game:
             await query.message.reply_text("❌ ဤအုပ်စုတွင် ဂိမ်းအဖွင့်ရှိနေပါသည်။ ဂိမ်းပြီးမှသာ Restore လုပ်ပါ။")
@@ -815,23 +820,27 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             game_id = create_game(group_id)
             
-            # Check for custom image
             custom_image = get_game_image('game_start')
             if custom_image:
                 await context.bot.send_photo(
                     chat_id=group_id,
                     photo=custom_image,
-                    caption=f"**ပွဲစဉ်** - `{game_id}`\n**စတင်လောင်းလို့ရပါပြီ**",
+                    caption=f"🎲 **ပွဲစဉ်အသစ်** - `{game_id}`\n\n"
+                            f"နံပါတ် ၁ မှ ၆ ထိရွေးချယ်လောင်းနိုင်ပါသည်။\n"
+                            f"တစ်ယောက် တစ်ခါသာလောင်းရမည်။\n"
+                            f"အနည်းဆုံး ၂၀၀ကျပ်၊ အများဆုံး ၁၀၀၀ကျပ်",
                     parse_mode='Markdown'
                 )
             else:
                 await context.bot.send_message(
                     chat_id=group_id,
-                    text=f"**ပွဲစဉ်** - `{game_id}`\n**စတင်လောင်းလို့ရပါပြီ**",
+                    text=f"🎲 **ပွဲစဉ်အသစ်** - `{game_id}`\n\n"
+                         f"နံပါတ် ၁ မှ ၆ ထိရွေးချယ်လောင်းနိုင်ပါသည်။\n"
+                         f"တစ်ယောက် တစ်ခါသာလောင်းရမည်။\n"
+                         f"အနည်းဆုံး ၂၀၀ကျပ်၊ အများဆုံး ၁၀၀၀ကျပ်",
                     parse_mode='Markdown'
                 )
             
-            # Send warning with buttons
             await context.bot.send_message(
                 chat_id=group_id,
                 text=get_warning_text(),
@@ -849,18 +858,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bets = get_game_bets(group_id, game_id)
             
             # Create bet list text
-            bet_text = f"✨ **ပွဲစဉ်** ➖ `{game_id}`\n"
+            bet_text = f"🎲 **ပွဲစဉ်** ➖ `{game_id}`\n"
             bet_text += f"➖ **လောင်းကြေးပိတ်ပါပြီ** ➖\n\n"
             
             if bets:
+                total_bet = 0
                 for bet in bets:
-                    multiplier = "5ဆ" if bet['bet_type'] == 'japort' else "2ဆ"
-                    bet_type_display = "S" if bet['bet_type'] == 'small' else "B" if bet['bet_type'] == 'big' else "J"
-                    bet_text += f"👤 {bet['user_name']} ➖ {bet_type_display} {bet['amount']:,} ({multiplier})\n"
+                    bet_text += f"👤 {bet['user_name']} ➖ နံပါတ် {bet['bet_number']} - {bet['amount']:,} ကျပ်\n"
+                    total_bet += bet['amount']
+                bet_text += f"\n**စုစုပေါင်းလောင်းငွေ:** {total_bet:,} ကျပ်"
             else:
                 bet_text += "❌ လောင်းကြေးမရှိပါ\n"
             
-            # Check for custom image
             custom_image = get_game_image('game_stop')
             if custom_image:
                 await context.bot.send_photo(
@@ -876,7 +885,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='Markdown'
                 )
             
-            # Send warning with buttons
             await context.bot.send_message(
                 chat_id=group_id,
                 text=get_warning_text(),
@@ -899,7 +907,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.chat_data['group_games'] = {}
             context.chat_data['group_games'][group_id] = game_id
             
-            # Bot sends first dice
+            # Bot sends dice (one dice only)
             await context.bot.send_dice(chat_id=group_id, emoji='🎲')
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -911,7 +919,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ===== PRIVATE CHAT - Owner only =====
     if chat.type == 'private' and user.id == OWNER_ID:
-        # Handle image uploads
         if 'awaiting_image' in context.user_data:
             if update.message.photo:
                 image_type = context.user_data['awaiting_image']
@@ -930,7 +937,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ ပုံကိုသာ ပို့ပါ။")
             return
         
-        # Handle admin addition
         if 'adding_admin' in context.user_data:
             try:
                 admin_id = int(text.strip())
@@ -940,7 +946,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"✅ {message}")
                 
                 if success:
-                    # Notify the new admin
                     try:
                         group_info = get_all_groups()
                         group_name = "Unknown"
@@ -963,7 +968,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del context.user_data['adding_admin']
             return
         
-        # Handle admin removal
         if 'removing_admin' in context.user_data:
             try:
                 admin_id = int(text.strip())
@@ -978,7 +982,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del context.user_data['removing_admin']
             return
         
-        # Handle restore file upload
         if 'awaiting_restore' in context.user_data:
             if update.message.document:
                 file = await update.message.document.get_file()
@@ -1013,31 +1016,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_admin(group_id, user.id) and update.message.reply_to_message:
             replied = update.message.reply_to_message
             
-            # Get target user (the one being replied to)
             target_user = replied.from_user
             target_user_id = target_user.id
             
-            # If replying to bot message, extract ID from text
             if target_user.id == context.bot.id:
                 match = re.search(r'ID[ -]+`?(\d+)`?', replied.text)
                 if match:
                     target_user_id = int(match.group(1))
             
-            # Get user data
             user_data = get_user(target_user_id)
             if not user_data:
                 await update.message.reply_text("❌ User ID မတွေ့ပါ။ User က bot ကို /start လုပ်ထားဖို့လိုပါတယ်။")
                 return
             
-            # Process deposit
             if text.startswith('+'):
                 try:
                     amount = int(text[1:])
                     prev_balance = user_data['balance']
                     new_balance = update_balance(target_user_id, amount, 'add')
-                    update_today_stats(target_user_id, 'today_deposit', amount)
                     
-                    # Send DM to user
                     try:
                         await context.bot.send_message(
                             chat_id=target_user_id,
@@ -1053,12 +1050,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except:
                         pass
                     
-                    # Send confirmation to admin
                     await update.message.reply_text(
                         f"✅ {user_data['name']} ထံသို့ {amount:,} ကျပ်ထည့်ပြီးပါပြီ"
                     )
                     
-                    # Group announcement
                     await context.bot.send_message(
                         chat_id=group_id,
                         text=f"👤 {user_data['name']} အကောင့်ထဲသို့ {amount:,} ကျပ် ထည့်သွင်းပေးလိုက်ပါပြီ။\n🎲 ဂိမ်းစတင်ကစားနိုင်ပါပြီ။"
@@ -1067,7 +1062,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except ValueError:
                     await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းထည့်ပါ")
             
-            # Process withdraw
             elif text.startswith('-'):
                 try:
                     amount = int(text[1:])
@@ -1078,9 +1072,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     prev_balance = user_data['balance']
                     new_balance = update_balance(target_user_id, amount, 'subtract')
-                    update_today_stats(target_user_id, 'today_withdraw', amount)
                     
-                    # Send DM to user
                     try:
                         await context.bot.send_message(
                             chat_id=target_user_id,
@@ -1096,12 +1088,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except:
                         pass
                     
-                    # Send confirmation to admin
                     await update.message.reply_text(
                         f"✅ {user_data['name']} ထံမှ {amount:,} ကျပ်ထုတ်ပြီးပါပြီ"
                     )
                     
-                    # Group announcement
                     await context.bot.send_message(
                         chat_id=group_id,
                         text=f"🧊 {user_data['name']} ထုတ်ယူငွေ {amount:,} ကျပ်ကို လွဲပေးပြီးပါပြီ။"
@@ -1122,8 +1112,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if user_bets:
                         bets_text = "\n\n**ယခုလောင်းထားသောငွေများ**\n"
                         for bet in user_bets:
-                            bet_type = "S" if bet[4] == 'small' else "B" if bet[4] == 'big' else "J"
-                            bets_text += f"{bet_type} {bet[5]:,} ကျပ်\n"
+                            bets_text += f"နံပါတ် {bet[4]} - {bet[5]:,} ကျပ်\n"
                 
                 msg = await update.message.reply_to_message.reply_text(
                     f"**အမည်** - {user_data['name']}\n"
@@ -1143,39 +1132,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not game or game['status'] != 'open':
             return
         
-        bet_type, amount = parse_bet(text)
-        if bet_type:
-            if has_both_small_big(text):
-                await update.message.reply_text("❌ Small နဲ့ Big တစ်ပြိုင်နက်မရပါ")
-                return
-            
+        bet_number, amount = parse_bet(text)
+        if bet_number and amount:
             if amount < 200 or amount > 1000:
                 await update.message.reply_text("❌ အနည်းဆုံး ၂၀၀ကျပ်၊ အများဆုံး ၁၀၀၀ကျပ်")
                 return
             
-            if bet_type in ['small', 'big']:
-                user_bets = get_user_bets(user.id, group_id, game['game_id'])
-                for bet in user_bets:
-                    if (bet_type == 'small' and bet[4] == 'big') or (bet_type == 'big' and bet[4] == 'small'):
-                        await update.message.reply_text("❌ Small နဲ့ Big တစ်ပြိုင်နက်မရပါ")
-                        return
+            # Check if user already bet in this game
+            bet_count = get_user_bet_count_for_game(user.id, group_id, game['game_id'])
+            if bet_count >= 1:
+                await update.message.reply_text("❌ ဤပွဲစဉ်တွင် တစ်ခါထဲသာလောင်းလို့ရပါသည်။")
+                return
             
             user_data = get_user(user.id)
             if not user_data or user_data['balance'] < amount:
                 await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
                 return
             
-            save_bet(group_id, game['game_id'], user.id, bet_type, amount)
+            save_bet(group_id, game['game_id'], user.id, bet_number, amount)
             new_balance = update_balance(user.id, amount, 'subtract')
             
-            multiplier = "5ဆ" if bet_type == 'japort' else "2ဆ"
-            bet_display = "Small" if bet_type == 'small' else "Big" if bet_type == 'big' else "Japort"
-            
-            # Confirm bet by replying to user's reply
             await update.message.reply_to_message.reply_text(
-                f"**ပွဲစဉ်** `{game['game_id']}`\n"
+                f"🎲 **ပွဲစဉ်** `{game['game_id']}`\n"
                 f"➖➖➖➖➖\n"
-                f"**{bet_display}** - {amount} ({multiplier})\n"
+                f"**နံပါတ် {bet_number}** - {amount} ကျပ်\n"
                 f"➖➖➖➖➖\n"
                 f"✅ လောင်းကြေးတင်ပြီးပါပြီ\n"
                 f"💰 လက်ကျန် {new_balance:,}Ks",
@@ -1189,18 +1169,14 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.type in ['group', 'supergroup']:
         group_id = str(chat.id)
         
-        # Only process dice sent by bot (auto dice)
+        # Only process dice sent by bot
         if user.id == context.bot.id:
             dice_value = update.message.dice.value
             print(f"BOT DICE: {dice_value} in group {group_id}")
             
-            if 'group_dice' not in context.chat_data:
-                context.chat_data['group_dice'] = {}
-            
             if 'group_games' not in context.chat_data:
                 context.chat_data['group_games'] = {}
             
-            group_dice = context.chat_data['group_dice']
             group_games = context.chat_data['group_games']
             game_id = group_games.get(group_id)
             
@@ -1208,103 +1184,88 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"No game found for group {group_id}")
                 return
             
-            # First dice
-            if group_id not in group_dice:
-                group_dice[group_id] = {'dice1': dice_value}
-                print(f"First dice for group {group_id}: {dice_value}")
-                
-                # Wait for dice to finish rolling, then send second dice
-                await asyncio.sleep(2)
-                await context.bot.send_dice(chat_id=chat.id, emoji='🎲')
-                print(f"Second dice sent to group {group_id}")
+            print(f"Processing game {game_id} with dice result: {dice_value}")
             
-            # Second dice
-            elif 'dice2' not in group_dice[group_id]:
-                group_dice[group_id]['dice2'] = dice_value
-                print(f"Second dice for group {group_id}: {dice_value}")
-                
-                dice1 = group_dice[group_id]['dice1']
-                dice2 = dice_value
-                total = dice1 + dice2
-                
-                print(f"Calculating result: {dice1} + {dice2} = {total}")
-                
-                # Determine result
-                if 2 <= total <= 6:
-                    result = 'small'
-                    display = "Small(S)"
-                    multiplier = 2
-                elif total == 7:
-                    result = 'japort'
-                    display = "Japort(J)"
-                    multiplier = 5
-                else:
-                    result = 'big'
-                    display = "Big(B)"
-                    multiplier = 2
-                
-                print(f"Game {game_id} result: {result}")
-                
-                # Update results (winners and losers)
-                winners, losers = update_bet_results(group_id, game_id, result)
-                print(f"Winners: {len(winners)}, Losers: {len(losers)}")
-                
-                # Create result text
-                result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
-                result_text += f"💥 **Dice Bot** 💥\n"
-                result_text += f"  {dice1}+{dice2} = {total} {display} ({multiplier}ဆ)\n"
-                result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
-                
-                if winners:
-                    for bet in winners:
-                        winnings = bet[5] * multiplier
-                        user_info = get_user(bet[3])
-                        if user_info:
-                            # Update winner's balance
-                            new_balance = update_balance(bet[3], winnings, 'add')
-                            prev_balance = new_balance - winnings
-                            
-                            result_text += f"👤 {user_info['name']} ➖ {display} > {bet[5]:,} + {winnings - bet[5]:,} = {winnings:,}\n"
-                            result_text += f"💰 လက်ကျန်: {prev_balance:,} + {winnings:,} = {new_balance:,}Ks\n\n"
-                else:
-                    result_text += "❌ အနိုင်ရသူမရှိပါ\n"
-                
-                # Process losers (auto deduct)
-                for bet in losers:
-                    update_balance(bet[3], bet[5], 'subtract')
-                
-                # Check for custom result image
-                custom_image = get_game_image('game_result')
-                if custom_image:
-                    await context.bot.send_photo(
-                        chat_id=chat.id,
-                        photo=custom_image,
-                        caption=result_text,
-                        parse_mode='Markdown'
-                    )
-                else:
-                    await context.bot.send_message(
-                        chat_id=chat.id,
-                        text=result_text,
-                        parse_mode='Markdown'
-                    )
-                
-                # Send warning with buttons
-                await context.bot.send_message(
+            # Update bet results
+            winners, total_win_amount = update_bet_results(group_id, game_id, dice_value)
+            
+            # Get game info
+            game = get_current_game(group_id)
+            if not game:
+                print(f"Game {game_id} not found")
+                return
+            
+            total_bet_amount = game['total_bet_amount']
+            owner_profit = total_bet_amount - total_win_amount
+            
+            # Close game with results
+            close_game(group_id, game_id, dice_value, total_win_amount, owner_profit)
+            
+            # Create result text for group
+            result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
+            result_text += f"💥 **Dice Bot** 💥\n"
+            result_text += f"**အံစာတုံးရလဒ်:** {dice_value}\n"
+            result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
+            
+            if winners:
+                for bet in winners:
+                    win_amount = bet[5] * dice_value
+                    user_info = get_user(bet[3])
+                    
+                    # Update winner's balance
+                    new_balance = update_balance(bet[3], win_amount, 'add')
+                    prev_balance = new_balance - win_amount
+                    
+                    result_text += f"👤 {user_info['name']} ➖ နံပါတ် {bet[4]} > {bet[5]:,} x {dice_value} = {win_amount:,} ကျပ်\n"
+                    result_text += f"💰 လက်ကျန်: {prev_balance:,} + {win_amount:,} = {new_balance:,}Ks\n\n"
+            else:
+                result_text += "❌ အနိုင်ရသူမရှိပါ\n"
+            
+            # Send result to group
+            custom_image = get_game_image('game_result')
+            if custom_image:
+                await context.bot.send_photo(
                     chat_id=chat.id,
-                    text=get_warning_text(),
-                    reply_markup=get_deposit_withdraw_buttons(),
+                    photo=custom_image,
+                    caption=result_text,
                     parse_mode='Markdown'
                 )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat.id,
+                    text=result_text,
+                    parse_mode='Markdown'
+                )
+            
+            # Send warning with buttons
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=get_warning_text(),
+                reply_markup=get_deposit_withdraw_buttons(),
+                parse_mode='Markdown'
+            )
+            
+            # Send owner report via DM
+            try:
+                owner_report = f"📊 **ပွဲစဉ်အစီရင်ခံစာ**\n\n"
+                owner_report += f"**ပွဲစဉ်:** `{game_id}`\n"
+                owner_report += f"**အုပ်စု:** {chat.title}\n"
+                owner_report += f"**အံစာတုံးရလဒ်:** {dice_value}\n"
+                owner_report += f"**စုစုပေါင်းလောင်းငွေ:** {total_bet_amount:,} ကျပ်\n"
+                owner_report += f"**အနိုင်ငွေပေးချေခဲ့သည်:** {total_win_amount:,} ကျပ်\n"
+                owner_report += f"**လက်ကျန်ငွေ (အမြတ်):** {owner_profit:,} ကျပ်\n"
                 
-                # Close game
-                close_game(group_id, game_id)
-                print(f"Game {game_id} closed")
-                
-                # Clean up
-                del group_dice[group_id]
-                del group_games[group_id]
-                print(f"✅ Game {game_id} completed in group {group_id}")
+                await context.bot.send_message(
+                    chat_id=OWNER_ID,
+                    text=owner_report,
+                    parse_mode='Markdown'
+                )
+            except:
+                pass
+            
+            # Clean up
+            del group_games[group_id]
+            print(f"✅ Game {game_id} completed in group {group_id}")
 
 # ==================== MAIN ====================
 def main():
@@ -1320,19 +1281,18 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
     
     print("=" * 60)
-    print("🤖 MULTI-GROUP BOT STARTED")
+    print("🤖 NEW DICE GAME BOT STARTED")
     print("=" * 60)
     print(f"👑 MAIN OWNER: {OWNER_ID}")
     print("=" * 60)
-    print("✅ FEATURES:")
-    print("   • Custom images for game start/stop/results")
-    print("   • Betting only when replying to bot's message")
-    print("   • Bot auto-sends 2 dice with delay")
-    print("   • Waits for dice to stop before calculating")
-    print("   • Multiple groups support")
-    print("   • Group-wise admins")
-    print("   • Group-wise backup/restore")
-    print("   • Deposit/Withdraw by replying to user")
+    print("✅ NEW GAME RULES:")
+    print("   • Bet on numbers 1-6 only")
+    print("   • Format: '1 1000', '2 500', etc.")
+    print("   • Min 200, Max 1000 per bet")
+    print("   • One bet per person per game")
+    print("   • Winnings: bet_amount × result_number")
+    print("   • Bot sends one dice only")
+    print("   • Owner gets profit report in DM")
     print("=" * 60)
     
     app.run_polling()
