@@ -1017,16 +1017,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if bet_type:
             # Check if trying to bet both small and big
             if has_both_small_big(text):
-                msg = await update.message.reply_text("❌ Small နဲ့ Big တစ်ပြိုင်နက်မရပါ")
-                await asyncio.sleep(3)
-                await msg.delete()
+                await update.message.reply_text("❌ Small နဲ့ Big တစ်ပြိုင်နက်မရပါ")
                 return
             
             # Check bet limits
             if amount < 200 or amount > 1000:
-                msg = await update.message.reply_text("❌ အနည်းဆုံး ၂၀၀ကျပ်၊ အများဆုံး ၁၀၀၀ကျပ်သာလောင်းရမည်")
-                await asyncio.sleep(3)
-                await msg.delete()
+                await update.message.reply_text("❌ အနည်းဆုံး ၂၀၀ကျပ်၊ အများဆုံး ၁၀၀၀ကျပ်သာလောင်းရမည်")
                 return
             
             # Check if user already bet on small/big together
@@ -1034,16 +1030,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_bets = get_user_bets(user.id, game['game_id'])
                 for bet in user_bets:
                     if (bet_type == 'small' and bet[3] == 'big') or (bet_type == 'big' and bet[3] == 'small'):
-                        msg = await update.message.reply_text("❌ Small နဲ့ Big တစ်ပြိုင်နက်မရပါ")
-                        await asyncio.sleep(3)
-                        await msg.delete()
+                        await update.message.reply_text("❌ Small နဲ့ Big တစ်ပြိုင်နက်မရပါ")
                         return
             
             user_data = get_user(user.id)
             if not user_data or user_data['balance'] < amount:
-                msg = await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
-                await asyncio.sleep(3)
-                await msg.delete()
+                await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
                 return
             
             save_bet(game['game_id'], user.id, bet_type, amount)
@@ -1053,7 +1045,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bet_display = "Small" if bet_type == 'small' else "Big" if bet_type == 'big' else "Japort"
             
             # Reply to user's bet message
-            bet_msg = await update.message.reply_to_message.reply_text(
+            await update.message.reply_to_message.reply_text(
                 f"**ပွဲစဉ်** `{game['game_id']}`\n"
                 f"➖➖➖➖➖\n"
                 f"**{bet_display}** - {amount} ({multiplier})\n"
@@ -1062,10 +1054,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💰 လက်ကျန်ငွေ {new_balance:,}Ks",
                 parse_mode='Markdown'
             )
-            
-            # Auto delete after 5 seconds
-            await asyncio.sleep(5)
-            await bet_msg.delete()
         return
 
 async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
