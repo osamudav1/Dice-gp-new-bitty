@@ -76,7 +76,7 @@ def init_db():
                   added_by TEXT,
                   added_at TIMESTAMP)''')
     
-    # Game images table (for custom images)
+    # Game images table
     c.execute('''CREATE TABLE IF NOT EXISTS game_images
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   image_type TEXT,
@@ -328,7 +328,6 @@ def save_bet(group_id, game_id, user_id, bet_number, amount):
     c.execute("INSERT INTO bets (game_id, group_id, user_id, bet_number, amount, status, timestamp) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
               (game_id, str(group_id), str(user_id), bet_number, amount, datetime.now()))
     
-    # Update game total bet amount
     c.execute("UPDATE games SET total_bet_amount = total_bet_amount + ? WHERE group_id = ? AND game_id = ?",
               (amount, str(group_id), game_id))
     
@@ -369,13 +368,12 @@ def update_bet_results(group_id, game_id, result_number):
     total_win_amount = 0
     
     for bet in bets:
-        if bet[4] == result_number:  # bet_number matches result
-            win_amount = bet[5] * result_number  # amount * result_number
+        if bet[4] == result_number:
+            win_amount = bet[5] * result_number
             c.execute("UPDATE bets SET status = 'won', win_amount = ? WHERE id = ?", (win_amount, bet[0]))
             winners.append(bet)
             total_win_amount += win_amount
             
-            # Update user stats
             user_id = bet[3]
             c.execute("UPDATE users SET total_win = total_win + ? WHERE user_id = ?", (win_amount, str(user_id)))
         else:
@@ -475,7 +473,6 @@ def add_group(group_id, group_name, group_link, added_by):
 # ==================== UTILITY FUNCTIONS ====================
 def parse_bet(text):
     text = text.lower().strip()
-    # Pattern: 1 1000, 2 500, 3 200, etc.
     patterns = [
         (r'^1 (\d+)$', 1), (r'^2 (\d+)$', 2), (r'^3 (\d+)$', 3),
         (r'^4 (\d+)$', 4), (r'^5 (\d+)$', 5), (r'^6 (\d+)$', 6),
@@ -1172,34 +1169,39 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Only process dice sent by bot
         if user.id == context.bot.id:
             dice_value = update.message.dice.value
-            print(f"BOT DICE: {dice_value} in group {group_id}")
+            print(f"🎲 BOT DICE: {dice_value} in group {group_id}")
             
+            # Get game_id from context
             if 'group_games' not in context.chat_data:
-                context.chat_data['group_games'] = {}
+                print("❌ group_games not found in context")
+                return
             
             group_games = context.chat_data['group_games']
             game_id = group_games.get(group_id)
             
             if not game_id:
-                print(f"No game found for group {group_id}")
+                print(f"❌ No game found for group {group_id}")
                 return
             
-            print(f"Processing game {game_id} with dice result: {dice_value}")
-            
-            # Update bet results
-            winners, total_win_amount = update_bet_results(group_id, game_id, dice_value)
+            print(f"✅ Found game {game_id} for group {group_id}")
             
             # Get game info
             game = get_current_game(group_id)
             if not game:
-                print(f"Game {game_id} not found")
+                print(f"❌ Game {game_id} not found in database")
                 return
+            
+            print(f"📊 Processing game {game_id} with dice result: {dice_value}")
+            
+            # Update bet results
+            winners, total_win_amount = update_bet_results(group_id, game_id, dice_value)
             
             total_bet_amount = game['total_bet_amount']
             owner_profit = total_bet_amount - total_win_amount
             
             # Close game with results
             close_game(group_id, game_id, dice_value, total_win_amount, owner_profit)
+            print(f"✅ Game {game_id} closed")
             
             # Create result text for group
             result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
@@ -1260,8 +1262,9 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text=owner_report,
                     parse_mode='Markdown'
                 )
-            except:
-                pass
+                print(f"📨 Owner report sent")
+            except Exception as e:
+                print(f"❌ Failed to send owner report: {e}")
             
             # Clean up
             del group_games[group_id]
@@ -1293,6 +1296,14 @@ def main():
     print("   • Winnings: bet_amount × result_number")
     print("   • Bot sends one dice only")
     print("   • Owner gets profit report in DM")
+    print("=" * 60)
+    print("🎲 DICE FLOW:")
+    print("   1. Admin stops game")
+    print("   2. Bot sends dice")
+    print("   3. Waits for dice to stop rolling")
+    print("   4. Calculates results immediately")
+    print("   5. Shows winners and updates balances")
+    print("   6. Sends owner report via DM")
     print("=" * 60)
     
     app.run_polling()
