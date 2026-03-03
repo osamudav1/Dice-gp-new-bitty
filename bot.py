@@ -26,6 +26,7 @@ def init_db():
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
     
+    # Users table
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (user_id TEXT PRIMARY KEY,
                   name TEXT,
@@ -35,6 +36,7 @@ def init_db():
                   today_bet INTEGER DEFAULT 0,
                   balance INTEGER DEFAULT 0)''')
     
+    # Games table
     c.execute('''CREATE TABLE IF NOT EXISTS games
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   game_id INTEGER UNIQUE,
@@ -44,6 +46,7 @@ def init_db():
                   created_at TIMESTAMP,
                   closed_at TIMESTAMP)''')
     
+    # Bets table
     c.execute('''CREATE TABLE IF NOT EXISTS bets
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   game_id INTEGER,
@@ -54,6 +57,7 @@ def init_db():
                   status TEXT,
                   timestamp TIMESTAMP)''')
     
+    # Admins table
     c.execute('''CREATE TABLE IF NOT EXISTS admins
                  (group_id TEXT,
                   user_id TEXT,
@@ -61,11 +65,15 @@ def init_db():
                   added_at TIMESTAMP,
                   PRIMARY KEY (group_id, user_id))''')
     
+    # Groups table
     c.execute('''CREATE TABLE IF NOT EXISTS groups
                  (group_id TEXT PRIMARY KEY,
                   group_name TEXT,
+                  group_link TEXT,
+                  added_by TEXT,
                   added_at TIMESTAMP)''')
     
+    # Welcome settings
     c.execute('''CREATE TABLE IF NOT EXISTS welcome_settings
                  (id INTEGER PRIMARY KEY CHECK (id=1),
                   photo_id TEXT,
@@ -75,6 +83,132 @@ def init_db():
     
     conn.commit()
     conn.close()
+
+# ==================== BACKUP FUNCTIONS ====================
+def create_group_backup(group_id):
+    """Create backup for specific group"""
+    conn = sqlite3.connect('bot_database.db')
+    c = conn.cursor()
+    
+    backup_data = {
+        'group_id': group_id,
+        'users': [],
+        'games': [],
+        'bets': [],
+        'admins': [],
+        'timestamp': datetime.now().isoformat()
+    }
+    
+    # Get group info
+    c.execute("SELECT group_name, group_link FROM groups WHERE group_id = ?", (str(group_id),))
+    group_info = c.fetchone()
+    if group_info:
+        backup_data['group_name'] = group_info[0]
+        backup_data['group_link'] = group_info[1]
+    
+    # Get users who have bets in this group
+    c.execute("SELECT DISTINCT user_id FROM bets WHERE group_id = ?", (str(group_id),))
+    user_ids = c.fetchall()
+    for (uid,) in user_ids:
+        c.execute("SELECT * FROM users WHERE user_id = ?", (uid,))
+        user = c.fetchone()
+        if user:
+            backup_data['users'].append({
+                'user_id': user[0],
+                'name': user[1],
+                'mention': user[2],
+                'today_deposit': user[3],
+                'today_withdraw': user[4],
+                'today_bet': user[5],
+                'balance': user[6]
+            })
+    
+    # Get games for this group
+    c.execute("SELECT * FROM games WHERE group_id = ?", (str(group_id),))
+    games = c.fetchall()
+    for game in games:
+        backup_data['games'].append({
+            'id': game[0],
+            'game_id': game[1],
+            'group_id': game[2],
+            'status': game[3],
+            'result': game[4],
+            'created_at': str(game[5]),
+            'closed_at': str(game[6]) if game[6] else None
+        })
+    
+    # Get bets for this group
+    c.execute("SELECT * FROM bets WHERE group_id = ?", (str(group_id),))
+    bets = c.fetchall()
+    for bet in bets:
+        backup_data['bets'].append({
+            'id': bet[0],
+            'game_id': bet[1],
+            'group_id': bet[2],
+            'user_id': bet[3],
+            'bet_type': bet[4],
+            'amount': bet[5],
+            'status': bet[6],
+            'timestamp': str(bet[7])
+        })
+    
+    # Get admins for this group
+    c.execute("SELECT user_id FROM admins WHERE group_id = ?", (str(group_id),))
+    admins = c.fetchall()
+    for (admin_id,) in admins:
+        backup_data['admins'].append(admin_id)
+    
+    conn.close()
+    
+    # Save to file
+    filename = f"backup_group_{group_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(backup_data, f, ensure_ascii=False, indent=2)
+    
+    return filename
+
+def restore_group_backup(group_id, file_path):
+    """Restore backup for specific group"""
+    with open(file_path, 'r', encoding='utf-8') as f:
+        backup_data = json.load(f)
+    
+    conn = sqlite3.connect('bot_database.db')
+    c = conn.cursor()
+    
+    # Check if backup is for this group
+    if str(backup_data['group_id']) != str(group_id):
+        conn.close()
+        return False, "Backup file is for different group"
+    
+    # Clear existing data for this group
+    c.execute("DELETE FROM bets WHERE group_id = ?", (str(group_id),))
+    c.execute("DELETE FROM games WHERE group_id = ?", (str(group_id),))
+    c.execute("DELETE FROM admins WHERE group_id = ?", (str(group_id),))
+    
+    # Restore users (update their balances)
+    for user in backup_data['users']:
+        c.execute("INSERT OR REPLACE INTO users (user_id, name, mention, today_deposit, today_withdraw, today_bet, balance) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                  (user['user_id'], user['name'], user['mention'], user['today_deposit'], user['today_withdraw'], user['today_bet'], user['balance']))
+    
+    # Restore games
+    for game in backup_data['games']:
+        c.execute("INSERT INTO games (id, game_id, group_id, status, result, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                  (game['id'], game['game_id'], game['group_id'], game['status'], game['result'], game['created_at'], game['closed_at']))
+    
+    # Restore bets
+    for bet in backup_data['bets']:
+        c.execute("INSERT INTO bets (id, game_id, group_id, user_id, bet_type, amount, status, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  (bet['id'], bet['game_id'], bet['group_id'], bet['user_id'], bet['bet_type'], bet['amount'], bet['status'], bet['timestamp']))
+    
+    # Restore admins
+    for admin_id in backup_data['admins']:
+        c.execute("INSERT INTO admins (group_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+                  (str(group_id), admin_id, str(OWNER_ID), datetime.now()))
+    
+    conn.commit()
+    conn.close()
+    
+    return True, f"Restored {len(backup_data['users'])} users, {len(backup_data['games'])} games, {len(backup_data['bets'])} bets"
 
 # ==================== DATABASE FUNCTIONS ====================
 def get_next_game_id(group_id):
@@ -157,8 +291,6 @@ def create_game(group_id):
     c = conn.cursor()
     c.execute("INSERT INTO games (game_id, group_id, status, created_at) VALUES (?, ?, 'open', ?)",
               (game_id, str(group_id), datetime.now()))
-    c.execute("INSERT OR IGNORE INTO groups (group_id, added_at) VALUES (?, ?)",
-              (str(group_id), datetime.now()))
     conn.commit()
     conn.close()
     return game_id
@@ -209,16 +341,18 @@ def update_bet_results(group_id, game_id, result_type):
     bets = c.fetchall()
     
     winners = []
+    losers = []
     for bet in bets:
         if bet[4] == result_type:
             c.execute("UPDATE bets SET status = 'won' WHERE id = ?", (bet[0],))
             winners.append(bet)
         else:
             c.execute("UPDATE bets SET status = 'lost' WHERE id = ?", (bet[0],))
+            losers.append(bet)
     
     conn.commit()
     conn.close()
-    return winners
+    return winners, losers
 
 def get_user_bets(user_id, group_id=None, game_id=None):
     conn = sqlite3.connect('bot_database.db')
@@ -245,6 +379,9 @@ def is_admin(group_id, user_id):
     result = c.fetchone()
     conn.close()
     return result is not None
+
+def is_owner(user_id):
+    return user_id == OWNER_ID
 
 def add_admin(group_id, user_id, added_by):
     if added_by != OWNER_ID:
@@ -282,15 +419,23 @@ def get_group_admins(group_id):
 def get_all_groups():
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
-    c.execute("SELECT group_id, group_name FROM groups")
+    c.execute("SELECT group_id, group_name, group_link, added_by FROM groups")
     groups = c.fetchall()
     conn.close()
     return groups
 
-def update_group_name(group_id, group_name):
+def add_group(group_id, group_name, group_link, added_by):
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
-    c.execute("UPDATE groups SET group_name = ? WHERE group_id = ?", (group_name, str(group_id)))
+    c.execute("INSERT OR REPLACE INTO groups (group_id, group_name, group_link, added_by, added_at) VALUES (?, ?, ?, ?, ?)",
+              (str(group_id), group_name, group_link, str(added_by), datetime.now()))
+    conn.commit()
+    conn.close()
+
+def update_group_link(group_id, group_link):
+    conn = sqlite3.connect('bot_database.db')
+    c = conn.cursor()
+    c.execute("UPDATE groups SET group_link = ? WHERE group_id = ?", (group_link, str(group_id)))
     conn.commit()
     conn.close()
 
@@ -362,7 +507,6 @@ async def create_start_image(game_id):
         font = ImageFont.load_default()
         font_small = ImageFont.load_default()
     
-    # Draw title
     d.text((50, 50), f"🎮 ဂိမ်းစတင်ပါပြီ", fill=(255, 215, 0), font=font)
     d.text((50, 110), f"ပွဲစဉ်: {game_id}", fill=(255, 255, 255), font=font_small)
     
@@ -383,11 +527,9 @@ async def create_stop_image(game_id, bets):
         font = ImageFont.load_default()
         font_small = ImageFont.load_default()
     
-    # Draw title
     d.text((50, 30), f"✨ ပွဲစဉ် ➖ {game_id}", fill=(255, 215, 0), font=font)
     d.text((50, 80), f"➖ လောင်းကြေးပိတ်ပါပြီ ➖", fill=(255, 255, 255), font=font_small)
     
-    # Draw bets
     y = 140
     if bets:
         for bet in bets:
@@ -404,8 +546,8 @@ async def create_stop_image(game_id, bets):
     img_bytes.seek(0)
     return img_bytes
 
-async def create_result_image(game_id, dice1, dice2, total, display, multiplier, winners):
-    """Create image with game results"""
+async def create_result_image(game_id, dice1, dice2, total, display, multiplier, winners, losers):
+    """Create image with game results (winners only shown, losers not shown)"""
     img = Image.new('RGB', (800, 600), color=(30, 30, 30))
     d = ImageDraw.Draw(img)
     
@@ -416,12 +558,10 @@ async def create_result_image(game_id, dice1, dice2, total, display, multiplier,
         font = ImageFont.load_default()
         font_small = ImageFont.load_default()
     
-    # Draw title
     d.text((50, 30), f"🎉 ပွဲစဉ် ➖ {game_id}", fill=(255, 215, 0), font=font)
     d.text((50, 80), f"💥 Dice Bot 💥", fill=(255, 255, 255), font=font)
     d.text((50, 130), f"{dice1}+{dice2} = {total} {display} ({multiplier}ဆ)", fill=(0, 255, 0), font=font_small)
     
-    # Draw winners
     y = 190
     if winners:
         for bet in winners:
@@ -431,7 +571,6 @@ async def create_result_image(game_id, dice1, dice2, total, display, multiplier,
             d.text((50, y), text, fill=(200, 200, 200), font=font_small)
             y += 30
             
-            # Show new balance
             new_balance = user_info['balance'] if user_info else 0
             prev_balance = new_balance - winnings
             balance_text = f"   💰 လက်ကျန်: {prev_balance:,} + {winnings:,} = {new_balance:,}Ks"
@@ -439,6 +578,10 @@ async def create_result_image(game_id, dice1, dice2, total, display, multiplier,
             y += 40
     else:
         d.text((50, y), "❌ အနိုင်ရသူမရှိပါ", fill=(200, 200, 200), font=font_small)
+    
+    # Auto deduct losers (not shown in image)
+    for bet in losers:
+        update_balance(bet[3], bet[5], 'subtract')
     
     img_bytes = io.BytesIO()
     img.save(img_bytes, format='PNG')
@@ -456,7 +599,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     create_or_update_user(user.id, user.full_name, mention)
     
     if chat.type in ['group', 'supergroup']:
-        update_group_name(chat.id, chat.title or "Unknown")
+        # Add group to database
+        group_link = f"https://t.me/{chat.username}" if chat.username else None
+        add_group(chat.id, chat.title, group_link, user.id)
         
         if is_admin(chat.id, user.id):
             keyboard = [
@@ -466,7 +611,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
                 text="👑 **Admin ထိန်းချုပ်ခန်း**\n\n"
-                     "ဂိမ်းစတင်ရန် သို့ ဂိမ်းပိတ်ရန် ခလုတ်နှိပ်ပါ။",
+                     "ဂိမ်းစတင်ရန် သို့ ဂိမ်းပိတ်ရန် ခလုတ်နှိပ်ပါ။\n\n"
+                     "**ငွေသွင်း/ထုတ်ရန်:** User စာကို Reply လုပ်ပြီး +5000 (သို့) -2000 ရိုက်ပါ။",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
@@ -487,28 +633,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.type == 'private':
         if user.id == OWNER_ID:
             welcome = get_welcome_settings()
-            keyboard = [
-                [InlineKeyboardButton("👥 Group များစာရင်း", callback_data='list_groups')],
-                [InlineKeyboardButton("➕ Admin ထည့်ရန်", callback_data='add_admin')],
-                [InlineKeyboardButton("➖ Admin ဖြုတ်ရန်", callback_data='remove_admin')],
-                [InlineKeyboardButton("📋 Admin စာရင်း", callback_data='list_admins')],
-                [InlineKeyboardButton("🖼️ Welcome ပုံထည့်ရန်", callback_data='welcome_add_photo')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
             
             if welcome['photo_id']:
                 await update.message.reply_photo(
                     photo=welcome['photo_id'],
-                    caption="👑 **Main Owner ထိန်းချုပ်ခန်း**",
-                    reply_markup=reply_markup,
+                    caption="👑 **Main Owner ထိန်းချုပ်ခန်း**\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။",
                     parse_mode='Markdown'
                 )
             else:
                 await update.message.reply_text(
-                    "👑 **Main Owner ထိန်းချုပ်ခန်း**",
-                    reply_markup=reply_markup,
+                    "👑 **Main Owner ထိန်းချုပ်ခန်း**\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။",
                     parse_mode='Markdown'
                 )
+            
+            # Show groups list with buttons
+            await show_groups_list(update, context)
         else:
             welcome = get_welcome_settings()
             keyboard = [
@@ -525,6 +664,49 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text(welcome['caption'], reply_markup=reply_markup)
 
+async def show_groups_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show list of all groups with management buttons"""
+    groups = get_all_groups()
+    
+    if not groups:
+        msg = "❌ Group မရှိပါသေးပါ။ Bot ကို Group ထဲဦးစွာထည့်ပါ။"
+        if update.callback_query:
+            await update.callback_query.message.reply_text(msg)
+        else:
+            await update.message.reply_text(msg)
+        return
+    
+    for group_id, group_name, group_link, added_by in groups:
+        admin_count = len(get_group_admins(group_id))
+        added_user = get_user(added_by)
+        added_mention = added_user['mention'] if added_user else "Unknown"
+        
+        text = f"**Group:** {group_name}\n"
+        text += f"**ID:** `{group_id}`\n"
+        if group_link:
+            text += f"**Link:** [သွားရန်]({group_link})\n"
+        text += f"**Admin အရေအတွက်:** {admin_count} ဦး\n"
+        text += f"**ထည့်သွင်းသူ:** {added_mention}\n"
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("💾 Backup", callback_data=f'backup_group_{group_id}'),
+                InlineKeyboardButton("🔄 Restore", callback_data=f'restore_group_{group_id}')
+            ],
+            [InlineKeyboardButton("👥 Admin များ", callback_data=f'list_group_admins_{group_id}')],
+            [
+                InlineKeyboardButton("➕ Admin ထည့်", callback_data=f'add_group_admin_{group_id}'),
+                InlineKeyboardButton("➖ Admin ဖြုတ်", callback_data=f'remove_group_admin_{group_id}')
+            ]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.callback_query:
+            await update.callback_query.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+        else:
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
@@ -532,34 +714,116 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     print(f"CALLBACK: {data} from {user.id}")
     
-    # Handle group selection
-    if data.startswith('select_group_'):
-        group_id = data.replace('select_group_', '')
-        context.user_data['selected_group'] = group_id
-        
-        if 'add_admin' in context.user_data:
-            await query.edit_message_text(
-                f"Group ID: `{group_id}`\n\n"
-                "Admin ထည့်ရန် User ID ကိုရိုက်ထည့်ပါ။",
-                parse_mode='Markdown'
-            )
-            context.user_data['awaiting'] = 'admin_user_id'
-        elif 'remove_admin' in context.user_data:
-            admins = get_group_admins(group_id)
-            if admins:
-                text = f"Group ID: `{group_id}`\n\nဖြုတ်ရန် Admin ID ကိုရိုက်ထည့်ပါ:\n"
-                for admin_id in admins:
-                    text += f"• `{admin_id}`\n"
-            else:
-                text = f"Group ID: `{group_id}`\n\nဤအုပ်စုတွင် Admin မရှိပါ။"
-            
-            await query.edit_message_text(text, parse_mode='Markdown')
-            context.user_data['awaiting'] = 'remove_admin_id'
+    if user.id != OWNER_ID:
+        await query.answer("Main Owner အတွက်သာဖြစ်ပါသည်", show_alert=True)
         return
     
-    # Game control
-    if data in ['game_start', 'game_stop']:
-        group_id = str(query.message.chat.id)
+    # Backup group
+    if data.startswith('backup_group_'):
+        group_id = data.replace('backup_group_', '')
+        await query.answer()
+        
+        # Check if game is open
+        current_game = get_current_game(group_id)
+        if current_game:
+            await query.message.reply_text("❌ ဤအုပ်စုတွင် ဂိမ်းအဖွင့်ရှိနေပါသည်။ ဂိမ်းပြီးမှသာ Backup လုပ်ပါ။")
+            return
+        
+        # Create backup
+        filename = create_group_backup(group_id)
+        
+        # Send file
+        with open(filename, 'rb') as f:
+            await context.bot.send_document(
+                chat_id=user.id,
+                document=f,
+                filename=filename,
+                caption=f"✅ **Backup အောင်မြင်ပါသည်**\n\nGroup: {group_id}\nရက်စွဲ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                parse_mode='Markdown'
+            )
+        
+        os.remove(filename)
+        await query.message.reply_text("✅ Backup ပြီးပါပြီ။ ဖိုင်ကို လက်ခံရရှိပါမည်။")
+    
+    # Restore group
+    elif data.startswith('restore_group_'):
+        group_id = data.replace('restore_group_', '')
+        await query.answer()
+        
+        # Check if game is open
+        current_game = get_current_game(group_id)
+        if current_game:
+            await query.message.reply_text("❌ ဤအုပ်စုတွင် ဂိမ်းအဖွင့်ရှိနေပါသည်။ ဂိမ်းပြီးမှသာ Restore လုပ်ပါ။")
+            return
+        
+        await query.message.reply_text(
+            f"🔄 **Restore လုပ်ရန် Backup ဖိုင်ကို ပို့ပါ**\n\n"
+            f"Group ID: `{group_id}`\n\n"
+            f"ဤအုပ်စုအတွက် JSON ဖိုင်ကိုသာ ပို့ပါ။",
+            parse_mode='Markdown'
+        )
+        context.user_data['awaiting_restore'] = group_id
+    
+    # List group admins
+    elif data.startswith('list_group_admins_'):
+        group_id = data.replace('list_group_admins_', '')
+        await query.answer()
+        
+        admins = get_group_admins(group_id)
+        group_info = get_all_groups()
+        group_name = "Unknown"
+        for gid, name, _, _ in group_info:
+            if str(gid) == str(group_id):
+                group_name = name
+                break
+        
+        if admins:
+            text = f"**{group_name}** အုပ်စုရှိ Admin များ\n\n"
+            for admin_id in admins:
+                user_data = get_user(admin_id)
+                admin_name = user_data['name'] if user_data else "Unknown"
+                admin_mention = user_data['mention'] if user_data else "Unknown"
+                text += f"• {admin_name}\n  ID: `{admin_id}`\n  Mention: {admin_mention}\n\n"
+        else:
+            text = f"**{group_name}** အုပ်စုတွင် Admin မရှိပါ။"
+        
+        await query.message.reply_text(text, parse_mode='Markdown')
+    
+    # Add group admin
+    elif data.startswith('add_group_admin_'):
+        group_id = data.replace('add_group_admin_', '')
+        await query.answer()
+        
+        await query.message.reply_text(
+            f"➕ **Admin ထည့်ရန်**\n\n"
+            f"Group ID: `{group_id}`\n\n"
+            f"Admin လုပ်မည့် User ID ကိုရိုက်ထည့်ပါ။",
+            parse_mode='Markdown'
+        )
+        context.user_data['adding_admin'] = group_id
+    
+    # Remove group admin
+    elif data.startswith('remove_group_admin_'):
+        group_id = data.replace('remove_group_admin_', '')
+        await query.answer()
+        
+        admins = get_group_admins(group_id)
+        if not admins:
+            await query.message.reply_text("❌ ဤအုပ်စုတွင် Admin မရှိပါ။")
+            return
+        
+        text = f"➖ **Admin ဖြုတ်ရန်**\n\nGroup ID: `{group_id}`\n\nဖြုတ်မည့် Admin ID ကိုရိုက်ထည့်ပါ:\n"
+        for admin_id in admins:
+            user_data = get_user(admin_id)
+            admin_name = user_data['name'] if user_data else "Unknown"
+            text += f"• {admin_name} - `{admin_id}`\n"
+        
+        await query.message.reply_text(text, parse_mode='Markdown')
+        context.user_data['removing_admin'] = group_id
+    
+    # Game control (for group admins)
+    elif data in ['game_start', 'game_stop'] and update.callback_query.message.chat.type in ['group', 'supergroup']:
+        group_id = str(update.callback_query.message.chat.id)
         
         if not is_admin(group_id, user.id):
             await query.answer("သင်သည် ဤအုပ်စုတွင် Admin မဟုတ်ပါ", show_alert=True)
@@ -616,8 +880,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
             
-            # Bot will auto-send dice
+            # Prepare for dice
             await asyncio.sleep(1)
+            dice_msg = await context.bot.send_message(
+                chat_id=group_id,
+                text="🎲 **အံစာတုံး စလှည့်ပါတော့မယ်...**\n\nခဏစောင့်ပါ။",
+                parse_mode='Markdown'
+            )
+            await asyncio.sleep(2)
+            await dice_msg.delete()
             
             # Store game ID
             if 'group_games' not in context.chat_data:
@@ -626,84 +897,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Bot sends first dice
             await context.bot.send_dice(chat_id=group_id, emoji='🎲')
-    
-    # Owner commands
-    elif user.id == OWNER_ID:
-        if data == 'list_groups':
-            groups = get_all_groups()
-            if groups:
-                text = "**Bot သုံးနေသော Group များ**\n\n"
-                for group_id, group_name in groups:
-                    name = group_name or "Unknown"
-                    admins = get_group_admins(group_id)
-                    admin_count = len(admins)
-                    text += f"• {name}\n  ID: `{group_id}`\n  Admin: {admin_count} ဦး\n"
-            else:
-                text = "Bot ကို မည်သည့် Group မှ မသုံးရသေးပါ။"
-            
-            await query.edit_message_text(text, parse_mode='Markdown')
-        
-        elif data == 'add_admin':
-            groups = get_all_groups()
-            if not groups:
-                await query.edit_message_text("❌ Group မရှိပါ။ ဦးစွာ Bot ကို Group ထဲထည့်ပါ။")
-                return
-            
-            keyboard = []
-            for group_id, group_name in groups:
-                name = group_name or "Unknown"
-                keyboard.append([InlineKeyboardButton(f"{name}", callback_data=f'select_group_{group_id}')])
-            
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                "Admin ထည့်ရန် Group ကိုရွေးပါ။",
-                reply_markup=reply_markup
-            )
-            context.user_data['add_admin'] = True
-        
-        elif data == 'remove_admin':
-            groups = get_all_groups()
-            if not groups:
-                await query.edit_message_text("❌ Group မရှိပါ။")
-                return
-            
-            keyboard = []
-            for group_id, group_name in groups:
-                name = group_name or "Unknown"
-                keyboard.append([InlineKeyboardButton(f"{name}", callback_data=f'select_group_{group_id}')])
-            
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                "Admin ဖြုတ်ရန် Group ကိုရွေးပါ။",
-                reply_markup=reply_markup
-            )
-            context.user_data['remove_admin'] = True
-        
-        elif data == 'list_admins':
-            groups = get_all_groups()
-            if not groups:
-                await query.edit_message_text("❌ Group မရှိပါ။")
-                return
-            
-            text = "**Group အလိုက် Admin များ**\n\n"
-            for group_id, group_name in groups:
-                name = group_name or "Unknown"
-                admins = get_group_admins(group_id)
-                text += f"**{name}** (ID: `{group_id}`)\n"
-                if admins:
-                    for admin_id in admins:
-                        user_data = get_user(admin_id)
-                        admin_name = user_data['name'] if user_data else "Unknown"
-                        text += f"  • {admin_name} (`{admin_id}`)\n"
-                else:
-                    text += "  • Admin မရှိ\n"
-                text += "\n"
-            
-            await query.edit_message_text(text, parse_mode='Markdown')
-        
-        elif data == 'welcome_add_photo':
-            await query.edit_message_text("📸 Welcome အတွက် ပုံကို ပို့ပါ။")
-            context.user_data['awaiting'] = 'welcome_photo'
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -712,60 +905,203 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     print(f"MESSAGE: {text[:30]} from {user.id} in {chat.id}")
     
-    # Private chat handling
-    if chat.type == 'private':
-        if user.id == OWNER_ID and 'awaiting' in context.user_data:
-            if context.user_data['awaiting'] == 'admin_user_id':
+    # ===== PRIVATE CHAT - Owner only =====
+    if chat.type == 'private' and user.id == OWNER_ID:
+        # Handle admin addition
+        if 'adding_admin' in context.user_data:
+            try:
+                admin_id = int(text.strip())
+                group_id = context.user_data['adding_admin']
+                
+                success, message = add_admin(group_id, admin_id, user.id)
+                await update.message.reply_text(f"✅ {message}")
+                
+                if success:
+                    # Notify the new admin
+                    try:
+                        group_info = get_all_groups()
+                        group_name = "Unknown"
+                        for gid, name, _, _ in group_info:
+                            if str(gid) == str(group_id):
+                                group_name = name
+                                break
+                        
+                        await context.bot.send_message(
+                            chat_id=admin_id,
+                            text=f"✅ သင့်အား **{group_name}** အုပ်စုတွင် Admin အဖြစ်ခန့်အပ်လိုက်ပါသည်။\n\n�ိမ်းစတင်/ပိတ်ခွင့်ရရှိပါမည်။",
+                            parse_mode='Markdown'
+                        )
+                    except:
+                        pass
+                
+            except ValueError:
+                await update.message.reply_text("❌ User ID ဂဏန်းထည့်ပါ")
+            
+            del context.user_data['adding_admin']
+            return
+        
+        # Handle admin removal
+        if 'removing_admin' in context.user_data:
+            try:
+                admin_id = int(text.strip())
+                group_id = context.user_data['removing_admin']
+                
+                success, message = remove_admin(group_id, admin_id, user.id)
+                await update.message.reply_text(f"✅ {message}")
+                
+            except ValueError:
+                await update.message.reply_text("❌ User ID ဂဏန်းထည့်ပါ")
+            
+            del context.user_data['removing_admin']
+            return
+        
+        # Handle restore file upload
+        if 'awaiting_restore' in context.user_data:
+            if update.message.document:
+                file = await update.message.document.get_file()
+                file_path = f"restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                await file.download_to_drive(file_path)
+                
+                group_id = context.user_data['awaiting_restore']
+                
                 try:
-                    admin_id = int(text.strip())
-                    group_id = context.user_data.get('selected_group')
-                    
-                    if group_id:
-                        success, message = add_admin(group_id, admin_id, user.id)
+                    success, message = restore_group_backup(group_id, file_path)
+                    if success:
                         await update.message.reply_text(f"✅ {message}")
                     else:
-                        await update.message.reply_text("❌ Group ရွေးထားခြင်းမရှိပါ")
-                    
-                except ValueError:
-                    await update.message.reply_text("❌ User ID ဂဏန်းထည့်ပါ")
+                        await update.message.reply_text(f"❌ {message}")
+                except Exception as e:
+                    await update.message.reply_text(f"❌ Restore failed: {str(e)}")
                 
-                context.user_data.clear()
-                return
-            
-            elif context.user_data['awaiting'] == 'remove_admin_id':
-                try:
-                    admin_id = int(text.strip())
-                    group_id = context.user_data.get('selected_group')
-                    
-                    if group_id:
-                        success, message = remove_admin(group_id, admin_id, user.id)
-                        await update.message.reply_text(f"✅ {message}")
-                    else:
-                        await update.message.reply_text("❌ Group ရွေးထားခြင်းမရှိပါ")
-                    
-                except ValueError:
-                    await update.message.reply_text("❌ User ID ဂဏန်းထည့်ပါ")
-                
-                context.user_data.clear()
-                return
-            
-            elif context.user_data['awaiting'] == 'welcome_photo':
-                if update.message.photo:
-                    photo_id = update.message.photo[-1].file_id
-                    update_welcome_photo(photo_id)
-                    await update.message.reply_text("✅ Welcome Photo ထည့်ပြီးပါပြီ")
-                else:
-                    update_welcome_caption(text)
-                    await update.message.reply_text("✅ Welcome Message ပြင်ပြီးပါပြီ")
-                context.user_data.clear()
-                return
+                os.remove(file_path)
+                del context.user_data['awaiting_restore']
+            else:
+                await update.message.reply_text("❌ JSON ဖိုင်ကိုသာ ပို့ပါ။")
+            return
+        
+        # Handle welcome photo
+        if 'awaiting_welcome' in context.user_data:
+            if update.message.photo:
+                photo_id = update.message.photo[-1].file_id
+                update_welcome_photo(photo_id)
+                await update.message.reply_text("✅ Welcome Photo ထည့်ပြီးပါပြီ")
+            else:
+                update_welcome_caption(text)
+                await update.message.reply_text("✅ Welcome Message ပြင်ပြီးပါပြီ")
+            del context.user_data['awaiting_welcome']
+            return
         
         return
     
-    # Group chat handling
+    # ===== GROUP CHAT =====
     if chat.type in ['group', 'supergroup']:
         group_id = str(chat.id)
         game = get_current_game(group_id)
+        
+        # Check if this is a deposit/withdraw command from admin
+        if is_admin(group_id, user.id) and update.message.reply_to_message:
+            replied = update.message.reply_to_message
+            
+            # Get target user (the one being replied to)
+            target_user = replied.from_user
+            target_user_id = target_user.id
+            
+            # If replying to bot message, extract ID from text
+            if target_user.id == context.bot.id:
+                match = re.search(r'ID[ -]+`?(\d+)`?', replied.text)
+                if match:
+                    target_user_id = int(match.group(1))
+            
+            # Get user data
+            user_data = get_user(target_user_id)
+            if not user_data:
+                await update.message.reply_text("❌ User ID မတွေ့ပါ။ User က bot ကို /start လုပ်ထားဖို့လိုပါတယ်။")
+                return
+            
+            # Process deposit
+            if text.startswith('+'):
+                try:
+                    amount = int(text[1:])
+                    prev_balance = user_data['balance']
+                    new_balance = update_balance(target_user_id, amount, 'add')
+                    update_today_stats(target_user_id, 'today_deposit', amount)
+                    
+                    # Send DM to user
+                    try:
+                        await context.bot.send_message(
+                            chat_id=target_user_id,
+                            text=f"✅ **ငွေသွင်းပြီးပါပြီ**\n\n"
+                                 f"👤 {user_data['name']}\n"
+                                 f"🆔 `{target_user_id}`\n"
+                                 f"📢 {user_data['mention']}\n"
+                                 f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
+                                 f"💰 ထည့်ငွေ: +{amount:,} ကျပ်\n"
+                                 f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
+                            parse_mode='Markdown'
+                        )
+                    except:
+                        pass
+                    
+                    # Send confirmation to admin
+                    await update.message.reply_text(
+                        f"✅ {user_data['name']} ထံသို့ {amount:,} ကျပ်ထည့်ပြီးပါပြီ",
+                        parse_mode='Markdown'
+                    )
+                    
+                    # Group announcement
+                    await context.bot.send_message(
+                        chat_id=group_id,
+                        text=f"👤 {user_data['name']} အကောင့်ထဲသို့ {amount:,} ကျပ် ထည့်သွင်းပေးလိုက်ပါပြီ။\n🎲 ဂိမ်းစတင်ကစားနိုင်ပါပြီ။"
+                    )
+                    
+                except ValueError:
+                    await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းထည့်ပါ")
+            
+            # Process withdraw
+            elif text.startswith('-'):
+                try:
+                    amount = int(text[1:])
+                    
+                    if user_data['balance'] < amount:
+                        await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
+                        return
+                    
+                    prev_balance = user_data['balance']
+                    new_balance = update_balance(target_user_id, amount, 'subtract')
+                    update_today_stats(target_user_id, 'today_withdraw', amount)
+                    
+                    # Send DM to user
+                    try:
+                        await context.bot.send_message(
+                            chat_id=target_user_id,
+                            text=f"✅ **ငွေထုတ်ပြီးပါပြီ**\n\n"
+                                 f"👤 {user_data['name']}\n"
+                                 f"🆔 `{target_user_id}`\n"
+                                 f"📢 {user_data['mention']}\n"
+                                 f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
+                                 f"💸 ထုတ်ငွေ: -{amount:,} ကျပ်\n"
+                                 f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
+                            parse_mode='Markdown'
+                        )
+                    except:
+                        pass
+                    
+                    # Send confirmation to admin
+                    await update.message.reply_text(
+                        f"✅ {user_data['name']} ထံမှ {amount:,} ကျပ်ထုတ်ပြီးပါပြီ",
+                        parse_mode='Markdown'
+                    )
+                    
+                    # Group announcement
+                    await context.bot.send_message(
+                        chat_id=group_id,
+                        text=f"🧊 {user_data['name']} ထုတ်ယူငွေ {amount:,} ကျပ်ကို လွဲပေးပြီးပါပြီ။"
+                    )
+                    
+                except ValueError:
+                    await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းထည့်ပါ")
+            
+            return
         
         # User info request
         if text == "3":
@@ -852,6 +1188,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.chat_data['group_games'] = {}
             
             group_dice = context.chat_data['group_dice']
+            group_games = context.chat_data['group_games']
             game_id = group_games.get(group_id)
             
             if not game_id:
@@ -862,9 +1199,8 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 group_dice[group_id] = {'dice1': dice_value}
                 print(f"First dice for group {group_id}: {dice_value}")
                 
-                # Wait for dice to finish rolling (Telegram auto handles this)
-                # Send second dice after short delay
-                await asyncio.sleep(2)
+                # Wait for dice to finish rolling, then send second dice
+                await asyncio.sleep(3)
                 await context.bot.send_dice(chat_id=chat.id, emoji='🎲')
             
             # Second dice
@@ -891,11 +1227,11 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 print(f"Game {game_id} result: {result}")
                 
-                # Update results
-                winners = update_bet_results(group_id, game_id, result)
+                # Update results (winners and losers)
+                winners, losers = update_bet_results(group_id, game_id, result)
                 
                 # Create and send result image
-                img_bytes = await create_result_image(game_id, dice1, dice2, total, display, multiplier, winners)
+                img_bytes = await create_result_image(game_id, dice1, dice2, total, display, multiplier, winners, losers)
                 await context.bot.send_photo(
                     chat_id=chat.id,
                     photo=img_bytes
@@ -928,6 +1264,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.Dice.ALL, handle_dice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_message))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
     
     print("=" * 60)
     print("🤖 MULTI-GROUP BOT STARTED")
@@ -937,11 +1274,13 @@ def main():
     print("✅ FEATURES:")
     print("   • Image for game start")
     print("   • Image for game stop with bet list")
-    print("   • Image for results with winners")
-    print("   • Bot auto-sends 2 dice")
+    print("   • Image for results (winners only)")
+    print("   • Bot auto-sends 2 dice with delay")
     print("   • Waits for dice to stop before calculating")
     print("   • Multiple groups support")
     print("   • Group-wise admins")
+    print("   • Group-wise backup/restore")
+    print("   • Deposit/Withdraw by replying to user")
     print("=" * 60)
     
     app.run_polling()
