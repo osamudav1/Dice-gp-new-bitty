@@ -1065,9 +1065,12 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             dice_value = update.message.dice.value
             print(f"DICE: {dice_value}")
             
+            # ပထမအံစာတုံး
             if 'dice1' not in context.chat_data:
                 context.chat_data['dice1'] = dice_value
                 context.chat_data['dice1_msg_id'] = update.message.message_id
+                print(f"First dice stored: {dice_value}")
+                
                 dice_msg = await context.bot.send_message(
                     chat_id=GAME_GROUP_ID,
                     text="🎲 **နောက်တစ်ခါထပ်ပို့ပါ**",
@@ -1076,14 +1079,18 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await asyncio.sleep(3)
                 await dice_msg.delete()
             
+            # ဒုတိယအံစာတုံး
             elif 'dice2' not in context.chat_data:
                 context.chat_data['dice2'] = dice_value
                 context.chat_data['dice2_msg_id'] = update.message.message_id
+                print(f"Second dice stored: {dice_value}")
                 
                 # Both dice received, calculate result
                 dice1 = context.chat_data['dice1']
                 dice2 = dice_value
                 total = dice1 + dice2
+                
+                print(f"Calculating result: {dice1} + {dice2} = {total}")
                 
                 # Determine result
                 if 2 <= total <= 6:
@@ -1100,11 +1107,15 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     multiplier = 2
                 
                 game_id = context.chat_data.get('awaiting_dice')
+                print(f"Game ID from chat_data: {game_id}")
+                print(f"Result type: {result}")
+                
                 if game_id:
                     print(f"Processing game {game_id} result: {result}")
                     
                     # Update bet results
                     winners = update_bet_results(game_id, result)
+                    print(f"Winners found: {len(winners)}")
                     
                     # Build result message
                     msg = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
@@ -1124,11 +1135,13 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else:
                         msg += "❌ အနိုင်ရသူမရှိပါ\n"
                     
+                    # Send result message
                     await context.bot.send_message(
                         chat_id=GAME_GROUP_ID,
                         text=msg,
                         parse_mode='Markdown'
                     )
+                    print("Result message sent")
                     
                     # Send warning as separate message with buttons
                     await context.bot.send_message(
@@ -1137,13 +1150,22 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reply_markup=get_deposit_withdraw_buttons(),
                         parse_mode='Markdown'
                     )
+                    print("Warning message sent")
                     
                     # Close game
                     close_game(game_id)
+                    print(f"Game {game_id} closed")
                     
                     # Clear all data
                     context.chat_data.clear()
-                    print(f"✅ Game {game_id} completed")
+                    print(f"✅ Game {game_id} completed successfully")
+                else:
+                    print("No awaiting_dice found in chat_data")
+                    # Clear dice data if no game
+                    if 'dice1' in context.chat_data:
+                        del context.chat_data['dice1']
+                    if 'dice2' in context.chat_data:
+                        del context.chat_data['dice2']
 
 # ==================== MAIN ====================
 def main():
@@ -1163,6 +1185,18 @@ def main():
     print("=" * 60)
     print(f"👑 OWNER ID: {OWNER_ID}")
     print(f"🎮 GAME GROUP: {GAME_GROUP_ID}")
+    print("=" * 60)
+    print("✅ GAME FLOW:")
+    print("   1. Owner starts game → Game ID + Warning (separate)")
+    print("   2. Users bet with S200, B500, J1000 etc.")
+    print("   3. Owner stops game → Bet list + Warning (separate) + Dice request")
+    print("   4. Owner sends 2 dice → Bot calculates result")
+    print("   5. Bot announces winners + Warning with buttons")
+    print("=" * 60)
+    print("✅ DICE HANDLING FIXED:")
+    print("   - First dice: stored, asks for second")
+    print("   - Second dice: calculates immediately")
+    print("   - Shows result + winners + updates balances")
     print("=" * 60)
     
     app.run_polling(allowed_updates=Update.ALL_TYPES)
