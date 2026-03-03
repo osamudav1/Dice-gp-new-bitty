@@ -324,41 +324,27 @@ def has_both_small_big(text):
     has_big = 'b' in text or 'big' in text
     return has_small and has_big
 
-def create_result_image(dice1, dice2, total, result_type, winners):
-    # Create a simple image with results
-    img = Image.new('RGB', (800, 600), color=(30, 30, 30))
-    d = ImageDraw.Draw(img)
+# ==================== AUTO CLOSE GAME FUNCTIONS ====================
+async def countdown_10sec(context: ContextTypes.DEFAULT_TYPE):
+    """Send countdown message 10 seconds before closing"""
+    job = context.job
+    game_id = job.data
     
-    # Try to load font, use default if not available
-    try:
-        font = ImageFont.truetype("arial.ttf", 30)
-        font_small = ImageFont.truetype("arial.ttf", 20)
-    except:
-        font = ImageFont.load_default()
-        font_small = ImageFont.load_default()
+    print(f"⏰ 10 second countdown for game {game_id}")
     
-    # Draw dice results
-    d.text((50, 50), f"🎲 Dice 1: {dice1}", fill=(255, 255, 255), font=font)
-    d.text((50, 100), f"🎲 Dice 2: {dice2}", fill=(255, 255, 255), font=font)
-    d.text((50, 150), f"Total: {total}", fill=(255, 255, 0), font=font)
-    d.text((50, 200), f"Result: {result_type.upper()}", fill=(0, 255, 0), font=font)
+    # Check if game is still open
+    game = get_current_game()
+    if not game or game['game_id'] != game_id or game['status'] != 'open':
+        print("Game already closed or not found")
+        return
     
-    # Draw winners
-    d.text((50, 300), "🏆 Winners:", fill=(255, 215, 0), font=font)
-    y = 350
-    for winner in winners[:10]:  # Show max 10 winners
-        d.text((50, y), f"{winner['user_name']}: {winner['amount']} -> {winner['winnings']}", 
-               fill=(255, 255, 255), font=font_small)
-        y += 30
-    
-    # Save to bytes
-    img_bytes = io.BytesIO()
-    img.save(img_bytes, format='PNG')
-    img_bytes.seek(0)
-    
-    return img_bytes
+    # Send countdown message
+    await context.bot.send_message(
+        chat_id=GAME_GROUP_ID,
+        text="⚠️ **ပွဲပိတ်ရန် ၁၀ စက္ကန့်သာလိုတော့သည်** ⚠️",
+        parse_mode='Markdown'
+    )
 
-# ==================== AUTO CLOSE GAME FUNCTION ====================
 async def auto_close_game(context: ContextTypes.DEFAULT_TYPE):
     """Auto close game after 1 minute"""
     job = context.job
@@ -522,6 +508,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='Markdown'
                 )
                 
+                # Schedule 10 second countdown (after 50 seconds)
+                context.job_queue.run_once(
+                    countdown_10sec, 
+                    50,  # 10 seconds before close (60-10=50)
+                    data=game_id,
+                    name=f"countdown_{game_id}"
+                )
+                print(f"Scheduled countdown for game {game_id} in 50 seconds")
+                
                 # Schedule auto close after 1 minute (60 seconds)
                 context.job_queue.run_once(
                     auto_close_game, 
@@ -537,30 +532,36 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Get current game
                 game = get_current_game()
                 if game:
-                    # Remove any scheduled auto close job
-                    current_jobs = context.job_queue.get_jobs_by_name(f"close_game_{game['game_id']}")
-                    for job in current_jobs:
-                        job.schedule_removal()
-                        print(f"Removed auto close job for game {game['game_id']}")
-                
-                # Close chat permissions immediately
-                await context.bot.set_chat_permissions(
-                    chat_id=GAME_GROUP_ID,
-                    permissions=ChatPermissions(
-                        can_send_messages=False,
-                        can_send_media_messages=False,
-                        can_send_polls=False,
-                        can_send_other_messages=False,
-                        can_add_web_page_previews=False
-                    )
-                )
-                print("✅ Chat permissions closed")
-                
-                game = get_current_game()
-                if game:
-                    bets = get_game_bets(game['game_id'])
+                    game_id = game['game_id']
+                    print(f"Manually stopping game {game_id}")
                     
-                    summary = f"✨ **ပွဲစဉ်** ➖ `{game['game_id']}`\n"
+                    # Remove any scheduled jobs
+                    countdown_jobs = context.job_queue.get_jobs_by_name(f"countdown_{game_id}")
+                    for job in countdown_jobs:
+                        job.schedule_removal()
+                        print(f"Removed countdown job for game {game_id}")
+                    
+                    close_jobs = context.job_queue.get_jobs_by_name(f"close_game_{game_id}")
+                    for job in close_jobs:
+                        job.schedule_removal()
+                        print(f"Removed auto close job for game {game_id}")
+                
+                    # Close chat permissions immediately
+                    await context.bot.set_chat_permissions(
+                        chat_id=GAME_GROUP_ID,
+                        permissions=ChatPermissions(
+                            can_send_messages=False,
+                            can_send_media_messages=False,
+                            can_send_polls=False,
+                            can_send_other_messages=False,
+                            can_add_web_page_previews=False
+                        )
+                    )
+                    print("✅ Chat permissions closed")
+                    
+                    bets = get_game_bets(game_id)
+                    
+                    summary = f"✨ **ပွဲစဉ်** ➖ `{game_id}`\n"
                     summary += f"➖ **လောင်းကြေးပိတ်ပါပြီ!** ➖\n\n"
                     
                     if bets:
@@ -582,8 +583,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode='Markdown'
                     )
                     
-                    context.chat_data['awaiting_dice'] = game['game_id']
-                    print(f"Game {game['game_id']} manually closed, awaiting dice")
+                    context.chat_data['awaiting_dice'] = game_id
+                    print(f"Game {game_id} manually closed, awaiting dice")
+                else:
+                    await query.message.reply_text("❌ လက်ရှိ ဂိမ်းမရှိပါ။")
             
             elif data in ['owner_small', 'owner_big', 'owner_japort']:
                 result_type = data.replace('owner_', '')
@@ -596,9 +599,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 print(f"Manual result: {result_type} for game {game_id}")
                 
-                # Remove any scheduled auto close job
-                current_jobs = context.job_queue.get_jobs_by_name(f"close_game_{game_id}")
-                for job in current_jobs:
+                # Remove any scheduled jobs
+                countdown_jobs = context.job_queue.get_jobs_by_name(f"countdown_{game_id}")
+                for job in countdown_jobs:
+                    job.schedule_removal()
+                
+                close_jobs = context.job_queue.get_jobs_by_name(f"close_game_{game_id}")
+                for job in close_jobs:
                     job.schedule_removal()
                 
                 # Update bet results
@@ -1078,8 +1085,12 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     print(f"Processing game {game_id}")
                     
                     # Remove any scheduled auto close job
-                    current_jobs = context.job_queue.get_jobs_by_name(f"close_game_{game_id}")
-                    for job in current_jobs:
+                    countdown_jobs = context.job_queue.get_jobs_by_name(f"countdown_{game_id}")
+                    for job in countdown_jobs:
+                        job.schedule_removal()
+                    
+                    close_jobs = context.job_queue.get_jobs_by_name(f"close_game_{game_id}")
+                    for job in close_jobs:
                         job.schedule_removal()
                     
                     # Update bet results
@@ -1171,10 +1182,11 @@ def main():
     print("✅ Features:")
     print("   - Owner DM: Full control panel with all buttons")
     print("   - Game Group: Auto close after 1 minute (FIXED)")
+    print("   - Game Group: 10 second countdown before closing")
     print("   - Game Group: Users can bet with S100, B100, J100")
     print("   - Game Group: Bot replies to bets with exact format")
     print("   - Game Group: Auto permissions control")
-    print("   - Game Group: Dice handling with 2 dice and proper formatting")
+    print("   - Game Group: Dice handling with 2 dice")
     print("   - Deposit Group: '1' for user info, +amount/-amount for owner")
     print("   - Deposit Group: Withdrawal notification with 🧊 emoji")
     print("=" * 60)
