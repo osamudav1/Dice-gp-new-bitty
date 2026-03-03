@@ -1205,6 +1205,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             game_id = group_games.get(group_id)
             
             if not game_id:
+                print(f"No game found for group {group_id}")
                 return
             
             # First dice
@@ -1213,16 +1214,20 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"First dice for group {group_id}: {dice_value}")
                 
                 # Wait for dice to finish rolling, then send second dice
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
                 await context.bot.send_dice(chat_id=chat.id, emoji='🎲')
+                print(f"Second dice sent to group {group_id}")
             
             # Second dice
             elif 'dice2' not in group_dice[group_id]:
                 group_dice[group_id]['dice2'] = dice_value
+                print(f"Second dice for group {group_id}: {dice_value}")
                 
                 dice1 = group_dice[group_id]['dice1']
                 dice2 = dice_value
                 total = dice1 + dice2
+                
+                print(f"Calculating result: {dice1} + {dice2} = {total}")
                 
                 # Determine result
                 if 2 <= total <= 6:
@@ -1242,6 +1247,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Update results (winners and losers)
                 winners, losers = update_bet_results(group_id, game_id, result)
+                print(f"Winners: {len(winners)}, Losers: {len(losers)}")
                 
                 # Create result text
                 result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
@@ -1253,12 +1259,19 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for bet in winners:
                         winnings = bet[5] * multiplier
                         user_info = get_user(bet[3])
-                        prev_balance = user_info['balance'] - winnings if user_info else 0
-                        
-                        result_text += f"👤 {user_info['name']} ➖ {display} > {bet[5]:,} + {winnings - bet[5]:,} = {winnings:,}\n"
-                        result_text += f"💰 လက်ကျန်: {prev_balance:,} + {winnings:,} = {user_info['balance']:,}Ks\n\n"
+                        if user_info:
+                            # Update winner's balance
+                            new_balance = update_balance(bet[3], winnings, 'add')
+                            prev_balance = new_balance - winnings
+                            
+                            result_text += f"👤 {user_info['name']} ➖ {display} > {bet[5]:,} + {winnings - bet[5]:,} = {winnings:,}\n"
+                            result_text += f"💰 လက်ကျန်: {prev_balance:,} + {winnings:,} = {new_balance:,}Ks\n\n"
                 else:
                     result_text += "❌ အနိုင်ရသူမရှိပါ\n"
+                
+                # Process losers (auto deduct)
+                for bet in losers:
+                    update_balance(bet[3], bet[5], 'subtract')
                 
                 # Check for custom result image
                 custom_image = get_game_image('game_result')
@@ -1286,6 +1299,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Close game
                 close_game(group_id, game_id)
+                print(f"Game {game_id} closed")
                 
                 # Clean up
                 del group_dice[group_id]
