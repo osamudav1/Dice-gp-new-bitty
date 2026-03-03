@@ -73,14 +73,41 @@ def init_db():
                   added_by TEXT,
                   added_at TIMESTAMP)''')
     
-    # Welcome settings
-    c.execute('''CREATE TABLE IF NOT EXISTS welcome_settings
-                 (id INTEGER PRIMARY KEY CHECK (id=1),
+    # Game images table (for custom images)
+    c.execute('''CREATE TABLE IF NOT EXISTS game_images
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  image_type TEXT,
                   photo_id TEXT,
-                  caption TEXT)''')
+                  updated_by TEXT,
+                  updated_at TIMESTAMP)''')
     
-    c.execute("INSERT OR IGNORE INTO welcome_settings (id, caption) VALUES (1, 'ကြိုဆိုပါတယ်')")
-    
+    conn.commit()
+    conn.close()
+
+# ==================== IMAGE FUNCTIONS ====================
+def save_game_image(image_type, photo_id, updated_by):
+    """Save custom game image"""
+    conn = sqlite3.connect('bot_database.db')
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO game_images (image_type, photo_id, updated_by, updated_at) VALUES (?, ?, ?, ?)",
+              (image_type, photo_id, str(updated_by), datetime.now()))
+    conn.commit()
+    conn.close()
+
+def get_game_image(image_type):
+    """Get custom game image"""
+    conn = sqlite3.connect('bot_database.db')
+    c = conn.cursor()
+    c.execute("SELECT photo_id FROM game_images WHERE image_type = ? ORDER BY updated_at DESC LIMIT 1", (image_type,))
+    result = c.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+def delete_game_image(image_type):
+    """Delete custom game image"""
+    conn = sqlite3.connect('bot_database.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM game_images WHERE image_type = ?", (image_type,))
     conn.commit()
     conn.close()
 
@@ -432,36 +459,6 @@ def add_group(group_id, group_name, group_link, added_by):
     conn.commit()
     conn.close()
 
-def update_group_link(group_id, group_link):
-    conn = sqlite3.connect('bot_database.db')
-    c = conn.cursor()
-    c.execute("UPDATE groups SET group_link = ? WHERE group_id = ?", (group_link, str(group_id)))
-    conn.commit()
-    conn.close()
-
-# ==================== WELCOME SETTINGS ====================
-def get_welcome_settings():
-    conn = sqlite3.connect('bot_database.db')
-    c = conn.cursor()
-    c.execute("SELECT photo_id, caption FROM welcome_settings WHERE id = 1")
-    result = c.fetchone()
-    conn.close()
-    return {'photo_id': result[0], 'caption': result[1]}
-
-def update_welcome_photo(photo_id):
-    conn = sqlite3.connect('bot_database.db')
-    c = conn.cursor()
-    c.execute("UPDATE welcome_settings SET photo_id = ? WHERE id = 1", (photo_id,))
-    conn.commit()
-    conn.close()
-
-def update_welcome_caption(caption):
-    conn = sqlite3.connect('bot_database.db')
-    c = conn.cursor()
-    c.execute("UPDATE welcome_settings SET caption = ? WHERE id = 1", (caption,))
-    conn.commit()
-    conn.close()
-
 # ==================== UTILITY FUNCTIONS ====================
 def parse_bet(text):
     text = text.lower().strip()
@@ -493,100 +490,6 @@ def get_deposit_withdraw_buttons(admin_username="osamu1123"):
 
 def get_warning_text():
     return "⚠️ **သတိပေးချက်** ⚠️\n\nငွေသွင်းငွေထုတ်ရန်အတွက် တရားဝင်အကောင့်မှလွဲ၍ အခြားအကောင့်များသည် လူလိမ်များဖြစ်ကြပါသည်။\nUsername ကိုသေချာစစ်ဆေးပါ။"
-
-# ==================== IMAGE GENERATION ====================
-async def create_start_image(game_id):
-    """Create image for game start"""
-    img = Image.new('RGB', (600, 200), color=(30, 30, 30))
-    d = ImageDraw.Draw(img)
-    
-    try:
-        font = ImageFont.truetype("arial.ttf", 40)
-        font_small = ImageFont.truetype("arial.ttf", 25)
-    except:
-        font = ImageFont.load_default()
-        font_small = ImageFont.load_default()
-    
-    d.text((50, 50), f"🎮 ဂိမ်းစတင်ပါပြီ", fill=(255, 215, 0), font=font)
-    d.text((50, 110), f"ပွဲစဉ်: {game_id}", fill=(255, 255, 255), font=font_small)
-    
-    img_bytes = io.BytesIO()
-    img.save(img_bytes, format='PNG')
-    img_bytes.seek(0)
-    return img_bytes
-
-async def create_stop_image(game_id, bets):
-    """Create image for game stop with bet list"""
-    img = Image.new('RGB', (700, 400), color=(30, 30, 30))
-    d = ImageDraw.Draw(img)
-    
-    try:
-        font = ImageFont.truetype("arial.ttf", 30)
-        font_small = ImageFont.truetype("arial.ttf", 20)
-    except:
-        font = ImageFont.load_default()
-        font_small = ImageFont.load_default()
-    
-    d.text((50, 30), f"✨ ပွဲစဉ် ➖ {game_id}", fill=(255, 215, 0), font=font)
-    d.text((50, 80), f"➖ လောင်းကြေးပိတ်ပါပြီ ➖", fill=(255, 255, 255), font=font_small)
-    
-    y = 140
-    if bets:
-        for bet in bets:
-            multiplier = "5ဆ" if bet['bet_type'] == 'japort' else "2ဆ"
-            bet_type_display = "S" if bet['bet_type'] == 'small' else "B" if bet['bet_type'] == 'big' else "J"
-            text = f"👤 {bet['user_name']} ➖ {bet_type_display} {bet['amount']:,} ({multiplier})"
-            d.text((50, y), text, fill=(200, 200, 200), font=font_small)
-            y += 30
-    else:
-        d.text((50, y), "❌ လောင်းကြေးမရှိပါ", fill=(200, 200, 200), font=font_small)
-    
-    img_bytes = io.BytesIO()
-    img.save(img_bytes, format='PNG')
-    img_bytes.seek(0)
-    return img_bytes
-
-async def create_result_image(game_id, dice1, dice2, total, display, multiplier, winners, losers):
-    """Create image with game results (winners only shown, losers not shown)"""
-    img = Image.new('RGB', (800, 600), color=(30, 30, 30))
-    d = ImageDraw.Draw(img)
-    
-    try:
-        font = ImageFont.truetype("arial.ttf", 30)
-        font_small = ImageFont.truetype("arial.ttf", 20)
-    except:
-        font = ImageFont.load_default()
-        font_small = ImageFont.load_default()
-    
-    d.text((50, 30), f"🎉 ပွဲစဉ် ➖ {game_id}", fill=(255, 215, 0), font=font)
-    d.text((50, 80), f"💥 Dice Bot 💥", fill=(255, 255, 255), font=font)
-    d.text((50, 130), f"{dice1}+{dice2} = {total} {display} ({multiplier}ဆ)", fill=(0, 255, 0), font=font_small)
-    
-    y = 190
-    if winners:
-        for bet in winners:
-            winnings = bet[5] * multiplier
-            user_info = get_user(bet[3])
-            text = f"👤 {user_info['name']} ➖ {display} > {bet[5]:,} + {winnings - bet[5]:,} = {winnings:,}"
-            d.text((50, y), text, fill=(200, 200, 200), font=font_small)
-            y += 30
-            
-            new_balance = user_info['balance'] if user_info else 0
-            prev_balance = new_balance - winnings
-            balance_text = f"   💰 လက်ကျန်: {prev_balance:,} + {winnings:,} = {new_balance:,}Ks"
-            d.text((70, y), balance_text, fill=(255, 255, 0), font=font_small)
-            y += 40
-    else:
-        d.text((50, y), "❌ အနိုင်ရသူမရှိပါ", fill=(200, 200, 200), font=font_small)
-    
-    # Auto deduct losers (not shown in image)
-    for bet in losers:
-        update_balance(bet[3], bet[5], 'subtract')
-    
-    img_bytes = io.BytesIO()
-    img.save(img_bytes, format='PNG')
-    img_bytes.seek(0)
-    return img_bytes
 
 # ==================== COMMAND HANDLERS ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -622,7 +525,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                    "B500 (Big 500)\n" \
                    "J1000 (Japort 1000)\n\n" \
                    "အနည်းဆုံး ၂၀၀ကျပ်\n" \
-                   "အများဆုံး ၁၀၀၀ကျပ်"
+                   "အများဆုံး ၁၀၀၀ကျပ်\n\n" \
+                   "**သတိပြုရန်:** Bot ရဲ့စာကို Reply လုပ်ပြီးမှသာ လောင်းကြေးတင်ရမည်။"
             
             await update.message.reply_text(
                 text=text,
@@ -632,37 +536,32 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if chat.type == 'private':
         if user.id == OWNER_ID:
-            welcome = get_welcome_settings()
-            
-            if welcome['photo_id']:
-                await update.message.reply_photo(
-                    photo=welcome['photo_id'],
-                    caption="👑 **Main Owner ထိန်းချုပ်ခန်း**\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။",
-                    parse_mode='Markdown'
-                )
-            else:
-                await update.message.reply_text(
-                    "👑 **Main Owner ထိန်းချုပ်ခန်း**\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။",
-                    parse_mode='Markdown'
-                )
-            
-            # Show groups list with buttons
-            await show_groups_list(update, context)
+            keyboard = [
+                [InlineKeyboardButton("👥 Group များစာရင်း", callback_data='list_groups')],
+                [InlineKeyboardButton("➕ Admin ထည့်ရန်", callback_data='add_admin')],
+                [InlineKeyboardButton("➖ Admin ဖြုတ်ရန်", callback_data='remove_admin')],
+                [InlineKeyboardButton("📋 Admin စာရင်း", callback_data='list_admins')],
+                [InlineKeyboardButton("🖼️ Game Start ပုံထည့်", callback_data='set_start_image')],
+                [InlineKeyboardButton("🖼️ Game Stop ပုံထည့်", callback_data='set_stop_image')],
+                [InlineKeyboardButton("🖼️ Result ပုံထည့်", callback_data='set_result_image')],
+                [InlineKeyboardButton("🗑️ ပုံဖျက်ရန်", callback_data='delete_images')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "👑 **Main Owner ထိန်းချုပ်ခန်း**\n\n"
+                "အောက်ပါခလုတ်များကိုနှိပ်ပါ။",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
         else:
-            welcome = get_welcome_settings()
             keyboard = [
                 [InlineKeyboardButton("🎲 ကစားရန်", url=GAME_GROUP_URL)]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            if welcome['photo_id']:
-                await update.message.reply_photo(
-                    photo=welcome['photo_id'],
-                    caption=welcome['caption'],
-                    reply_markup=reply_markup
-                )
-            else:
-                await update.message.reply_text(welcome['caption'], reply_markup=reply_markup)
+            await update.message.reply_text(
+                "ကစားရန် Game Group ကိုသွားပါ။",
+                reply_markup=reply_markup
+            )
 
 async def show_groups_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show list of all groups with management buttons"""
@@ -718,8 +617,85 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Main Owner အတွက်သာဖြစ်ပါသည်", show_alert=True)
         return
     
+    # Image settings
+    if data == 'set_start_image':
+        await query.answer()
+        await query.edit_message_text(
+            "🖼️ **Game Start အတွက်ပုံထည့်ရန်**\n\n"
+            "ပုံကိုပို့ပါ။ ဤပုံသည် ဂိမ်းစတင်တိုင်းတွင်ပါမည်။",
+            parse_mode='Markdown'
+        )
+        context.user_data['awaiting_image'] = 'game_start'
+    
+    elif data == 'set_stop_image':
+        await query.answer()
+        await query.edit_message_text(
+            "🖼️ **Game Stop အတွက်ပုံထည့်ရန်**\n\n"
+            "ပုံကိုပို့ပါ။ ဤပုံသည် ဂိမ်းပိတ်တိုင်းတွင်ပါမည်။",
+            parse_mode='Markdown'
+        )
+        context.user_data['awaiting_image'] = 'game_stop'
+    
+    elif data == 'set_result_image':
+        await query.answer()
+        await query.edit_message_text(
+            "🖼️ **Result အတွက်ပုံထည့်ရန်**\n\n"
+            "ပုံကိုပို့ပါ။ ဤပုံသည် ရလဒ်ထုတ်တိုင်းတွင်ပါမည်။",
+            parse_mode='Markdown'
+        )
+        context.user_data['awaiting_image'] = 'game_result'
+    
+    elif data == 'delete_images':
+        await query.answer()
+        keyboard = [
+            [InlineKeyboardButton("🎮 Game Start ပုံဖျက်", callback_data='del_start')],
+            [InlineKeyboardButton("⏹️ Game Stop ပုံဖျက်", callback_data='del_stop')],
+            [InlineKeyboardButton("🎲 Result ပုံဖျက်", callback_data='del_result')],
+            [InlineKeyboardButton("« နောက်သို့", callback_data='back_to_main')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            "🗑️ **ဖျက်လိုသောပုံကိုရွေးပါ**",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    
+    elif data == 'del_start':
+        delete_game_image('game_start')
+        await query.answer("✅ Game Start ပုံဖျက်ပြီးပါပြီ")
+        await query.edit_message_text("✅ Game Start ပုံဖျက်ပြီးပါပြီ")
+    
+    elif data == 'del_stop':
+        delete_game_image('game_stop')
+        await query.answer("✅ Game Stop ပုံဖျက်ပြီးပါပြီ")
+        await query.edit_message_text("✅ Game Stop ပုံဖျက်ပြီးပါပြီ")
+    
+    elif data == 'del_result':
+        delete_game_image('game_result')
+        await query.answer("✅ Result ပုံဖျက်ပြီးပါပြီ")
+        await query.edit_message_text("✅ Result ပုံဖျက်ပြီးပါပြီ")
+    
+    elif data == 'back_to_main':
+        await query.answer()
+        keyboard = [
+            [InlineKeyboardButton("👥 Group များစာရင်း", callback_data='list_groups')],
+            [InlineKeyboardButton("➕ Admin ထည့်ရန်", callback_data='add_admin')],
+            [InlineKeyboardButton("➖ Admin ဖြုတ်ရန်", callback_data='remove_admin')],
+            [InlineKeyboardButton("📋 Admin စာရင်း", callback_data='list_admins')],
+            [InlineKeyboardButton("🖼️ Game Start ပုံထည့်", callback_data='set_start_image')],
+            [InlineKeyboardButton("🖼️ Game Stop ပုံထည့်", callback_data='set_stop_image')],
+            [InlineKeyboardButton("🖼️ Result ပုံထည့်", callback_data='set_result_image')],
+            [InlineKeyboardButton("🗑️ ပုံဖျက်ရန်", callback_data='delete_images')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            "👑 **Main Owner ထိန်းချုပ်ခန်း**",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    
     # Backup group
-    if data.startswith('backup_group_'):
+    elif data.startswith('backup_group_'):
         group_id = data.replace('backup_group_', '')
         await query.answer()
         
@@ -839,14 +815,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             game_id = create_game(group_id)
             
-            # Send start image
-            img_bytes = await create_start_image(game_id)
-            await context.bot.send_photo(
-                chat_id=group_id,
-                photo=img_bytes,
-                caption=f"**စတင်လောင်းလို့ရပါပြီ**",
-                parse_mode='Markdown'
-            )
+            # Check for custom image
+            custom_image = get_game_image('game_start')
+            if custom_image:
+                await context.bot.send_photo(
+                    chat_id=group_id,
+                    photo=custom_image,
+                    caption=f"**ပွဲစဉ်** - `{game_id}`\n**စတင်လောင်းလို့ရပါပြီ**",
+                    parse_mode='Markdown'
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=group_id,
+                    text=f"**ပွဲစဉ်** - `{game_id}`\n**စတင်လောင်းလို့ရပါပြီ**",
+                    parse_mode='Markdown'
+                )
             
             # Send warning with buttons
             await context.bot.send_message(
@@ -865,12 +848,33 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             game_id = game['game_id']
             bets = get_game_bets(group_id, game_id)
             
-            # Send stop image with bet list
-            img_bytes = await create_stop_image(game_id, bets)
-            await context.bot.send_photo(
-                chat_id=group_id,
-                photo=img_bytes
-            )
+            # Create bet list text
+            bet_text = f"✨ **ပွဲစဉ်** ➖ `{game_id}`\n"
+            bet_text += f"➖ **လောင်းကြေးပိတ်ပါပြီ** ➖\n\n"
+            
+            if bets:
+                for bet in bets:
+                    multiplier = "5ဆ" if bet['bet_type'] == 'japort' else "2ဆ"
+                    bet_type_display = "S" if bet['bet_type'] == 'small' else "B" if bet['bet_type'] == 'big' else "J"
+                    bet_text += f"👤 {bet['user_name']} ➖ {bet_type_display} {bet['amount']:,} ({multiplier})\n"
+            else:
+                bet_text += "❌ လောင်းကြေးမရှိပါ\n"
+            
+            # Check for custom image
+            custom_image = get_game_image('game_stop')
+            if custom_image:
+                await context.bot.send_photo(
+                    chat_id=group_id,
+                    photo=custom_image,
+                    caption=bet_text,
+                    parse_mode='Markdown'
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=group_id,
+                    text=bet_text,
+                    parse_mode='Markdown'
+                )
             
             # Send warning with buttons
             await context.bot.send_message(
@@ -907,6 +911,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ===== PRIVATE CHAT - Owner only =====
     if chat.type == 'private' and user.id == OWNER_ID:
+        # Handle image uploads
+        if 'awaiting_image' in context.user_data:
+            if update.message.photo:
+                image_type = context.user_data['awaiting_image']
+                photo_id = update.message.photo[-1].file_id
+                save_game_image(image_type, photo_id, user.id)
+                
+                image_names = {
+                    'game_start': 'Game Start',
+                    'game_stop': 'Game Stop',
+                    'game_result': 'Result'
+                }
+                
+                await update.message.reply_text(f"✅ {image_names.get(image_type, '')} ပုံထည့်ပြီးပါပြီ")
+                del context.user_data['awaiting_image']
+            else:
+                await update.message.reply_text("❌ ပုံကိုသာ ပို့ပါ။")
+            return
+        
         # Handle admin addition
         if 'adding_admin' in context.user_data:
             try:
@@ -928,7 +951,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                         await context.bot.send_message(
                             chat_id=admin_id,
-                            text=f"✅ သင့်အား **{group_name}** အုပ်စုတွင် Admin အဖြစ်ခန့်အပ်လိုက်ပါသည်။\n\n�ိမ်းစတင်/ပိတ်ခွင့်ရရှိပါမည်။",
+                            text=f"✅ သင့်အား **{group_name}** အုပ်စုတွင် Admin အဖြစ်ခန့်အပ်လိုက်ပါသည်။\n\nဂိမ်းစတင်/ပိတ်ခွင့်ရရှိပါမည်။",
                             parse_mode='Markdown'
                         )
                     except:
@@ -977,18 +1000,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 del context.user_data['awaiting_restore']
             else:
                 await update.message.reply_text("❌ JSON ဖိုင်ကိုသာ ပို့ပါ။")
-            return
-        
-        # Handle welcome photo
-        if 'awaiting_welcome' in context.user_data:
-            if update.message.photo:
-                photo_id = update.message.photo[-1].file_id
-                update_welcome_photo(photo_id)
-                await update.message.reply_text("✅ Welcome Photo ထည့်ပြီးပါပြီ")
-            else:
-                update_welcome_caption(text)
-                await update.message.reply_text("✅ Welcome Message ပြင်ပြီးပါပြီ")
-            del context.user_data['awaiting_welcome']
             return
         
         return
@@ -1044,8 +1055,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     # Send confirmation to admin
                     await update.message.reply_text(
-                        f"✅ {user_data['name']} ထံသို့ {amount:,} ကျပ်ထည့်ပြီးပါပြီ",
-                        parse_mode='Markdown'
+                        f"✅ {user_data['name']} ထံသို့ {amount:,} ကျပ်ထည့်ပြီးပါပြီ"
                     )
                     
                     # Group announcement
@@ -1088,8 +1098,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     # Send confirmation to admin
                     await update.message.reply_text(
-                        f"✅ {user_data['name']} ထံမှ {amount:,} ကျပ်ထုတ်ပြီးပါပြီ",
-                        parse_mode='Markdown'
+                        f"✅ {user_data['name']} ထံမှ {amount:,} ကျပ်ထုတ်ပြီးပါပြီ"
                     )
                     
                     # Group announcement
@@ -1127,7 +1136,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await msg.delete()
             return
         
-        # Betting
+        # Betting - ONLY if replying to bot's message
+        if not update.message.reply_to_message or update.message.reply_to_message.from_user.id != context.bot.id:
+            return
+        
         if not game or game['status'] != 'open':
             return
         
@@ -1159,6 +1171,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             multiplier = "5ဆ" if bet_type == 'japort' else "2ဆ"
             bet_display = "Small" if bet_type == 'small' else "Big" if bet_type == 'big' else "Japort"
             
+            # Confirm bet by replying to user's reply
             await update.message.reply_to_message.reply_text(
                 f"**ပွဲစဉ်** `{game['game_id']}`\n"
                 f"➖➖➖➖➖\n"
@@ -1230,12 +1243,38 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Update results (winners and losers)
                 winners, losers = update_bet_results(group_id, game_id, result)
                 
-                # Create and send result image
-                img_bytes = await create_result_image(game_id, dice1, dice2, total, display, multiplier, winners, losers)
-                await context.bot.send_photo(
-                    chat_id=chat.id,
-                    photo=img_bytes
-                )
+                # Create result text
+                result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
+                result_text += f"💥 **Dice Bot** 💥\n"
+                result_text += f"  {dice1}+{dice2} = {total} {display} ({multiplier}ဆ)\n"
+                result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
+                
+                if winners:
+                    for bet in winners:
+                        winnings = bet[5] * multiplier
+                        user_info = get_user(bet[3])
+                        prev_balance = user_info['balance'] - winnings if user_info else 0
+                        
+                        result_text += f"👤 {user_info['name']} ➖ {display} > {bet[5]:,} + {winnings - bet[5]:,} = {winnings:,}\n"
+                        result_text += f"💰 လက်ကျန်: {prev_balance:,} + {winnings:,} = {user_info['balance']:,}Ks\n\n"
+                else:
+                    result_text += "❌ အနိုင်ရသူမရှိပါ\n"
+                
+                # Check for custom result image
+                custom_image = get_game_image('game_result')
+                if custom_image:
+                    await context.bot.send_photo(
+                        chat_id=chat.id,
+                        photo=custom_image,
+                        caption=result_text,
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id=chat.id,
+                        text=result_text,
+                        parse_mode='Markdown'
+                    )
                 
                 # Send warning with buttons
                 await context.bot.send_message(
@@ -1272,9 +1311,8 @@ def main():
     print(f"👑 MAIN OWNER: {OWNER_ID}")
     print("=" * 60)
     print("✅ FEATURES:")
-    print("   • Image for game start")
-    print("   • Image for game stop with bet list")
-    print("   • Image for results (winners only)")
+    print("   • Custom images for game start/stop/results")
+    print("   • Betting only when replying to bot's message")
     print("   • Bot auto-sends 2 dice with delay")
     print("   • Waits for dice to stop before calculating")
     print("   • Multiple groups support")
