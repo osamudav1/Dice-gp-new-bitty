@@ -97,7 +97,17 @@ def get_user(user_id):
     user = c.fetchone()
     conn.close()
     
-    if not user:
+    if user:
+        return {
+            'user_id': user[0],
+            'name': user[1],
+            'mention': user[2],
+            'today_deposit': user[3],
+            'today_withdraw': user[4],
+            'today_bet': user[5],
+            'balance': user[6]
+        }
+    else:
         return {
             'user_id': str(user_id),
             'name': 'Unknown',
@@ -107,16 +117,6 @@ def get_user(user_id):
             'today_bet': 0,
             'balance': 0
         }
-    
-    return {
-        'user_id': user[0],
-        'name': user[1],
-        'mention': user[2],
-        'today_deposit': user[3],
-        'today_withdraw': user[4],
-        'today_bet': user[5],
-        'balance': user[6]
-    }
 
 def create_or_update_user(user_id, name, mention):
     conn = sqlite3.connect('bot_database.db')
@@ -383,22 +383,30 @@ async def auto_close_game(context: ContextTypes.DEFAULT_TYPE):
             can_add_web_page_previews=False
         )
     )
+    print("✅ Chat permissions closed")
     
+    # Get all bets for this game
     bets = get_game_bets(game_id)
+    print(f"Found {len(bets)} bets")
     
+    # Send summary message
     summary = f"✨ **ပွဲစဉ်** ➖ `{game_id}`\n"
     summary += f"➖ **လောင်းကြေးပိတ်ပါပြီ!** ➖\n\n"
     
-    for bet in bets:
-        multiplier = "5ဆ" if bet['bet_type'] == 'japort' else "2ဆ"
-        bet_type_display = "S" if bet['bet_type'] == 'small' else "B" if bet['bet_type'] == 'big' else "J"
-        summary += f"👤 {bet['user_name']} ➖ {bet_type_display} {bet['amount']:,} ({multiplier})\n"
+    if bets:
+        for bet in bets:
+            multiplier = "5ဆ" if bet['bet_type'] == 'japort' else "2ဆ"
+            bet_type_display = "S" if bet['bet_type'] == 'small' else "B" if bet['bet_type'] == 'big' else "J"
+            summary += f"👤 {bet['user_name']} ➖ {bet_type_display} {bet['amount']:,} ({multiplier})\n"
+    else:
+        summary += "❌ လောင်းကြေးမရှိပါ\n"
     
     await context.bot.send_message(chat_id=GAME_GROUP_ID, text=summary, parse_mode='Markdown')
     
     # 1 second delay before asking for dice
     await asyncio.sleep(1)
     
+    # Ask for dice
     await context.bot.send_message(
         chat_id=GAME_GROUP_ID,
         text="🎲 **အံစာတုံး ၂ တုံး ပို့ပေးပါ။**",
@@ -407,8 +415,7 @@ async def auto_close_game(context: ContextTypes.DEFAULT_TYPE):
     
     # Store game_id in context for dice handling
     context.chat_data['awaiting_dice'] = game_id
-    
-    print(f"✅ Auto close completed for game {game_id}")
+    print(f"✅ Auto close completed for game {game_id}, awaiting dice")
 
 # ==================== COMMAND HANDLERS ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -500,8 +507,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.id == OWNER_ID:
             if data == 'owner_game_start':
                 await query.answer("✅ Game စတင်ရန်")
-                game_id = create_game()
                 
+                # Create new game
+                game_id = create_game()
+                print(f"Game created with ID: {game_id}")
+                
+                # Send start message to game group
                 await context.bot.send_message(
                     chat_id=GAME_GROUP_ID,
                     text=f"**ပွဲစဉ်** - `{game_id}`\n"
@@ -518,6 +529,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     data=game_id,
                     name=f"close_game_{game_id}"
                 )
+                print(f"Scheduled auto close for game {game_id} in 60 seconds")
                 
             elif data == 'owner_game_stop':
                 await query.answer("✅ Game ပိတ်ရန်")
@@ -529,6 +541,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     current_jobs = context.job_queue.get_jobs_by_name(f"close_game_{game['game_id']}")
                     for job in current_jobs:
                         job.schedule_removal()
+                        print(f"Removed auto close job for game {game['game_id']}")
                 
                 # Close chat permissions immediately
                 await context.bot.set_chat_permissions(
@@ -541,6 +554,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         can_add_web_page_previews=False
                     )
                 )
+                print("✅ Chat permissions closed")
                 
                 game = get_current_game()
                 if game:
@@ -549,10 +563,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     summary = f"✨ **ပွဲစဉ်** ➖ `{game['game_id']}`\n"
                     summary += f"➖ **လောင်းကြေးပိတ်ပါပြီ!** ➖\n\n"
                     
-                    for bet in bets:
-                        multiplier = "5ဆ" if bet['bet_type'] == 'japort' else "2ဆ"
-                        bet_type_display = "S" if bet['bet_type'] == 'small' else "B" if bet['bet_type'] == 'big' else "J"
-                        summary += f"👤 {bet['user_name']} ➖ {bet_type_display} {bet['amount']:,} ({multiplier})\n"
+                    if bets:
+                        for bet in bets:
+                            multiplier = "5ဆ" if bet['bet_type'] == 'japort' else "2ဆ"
+                            bet_type_display = "S" if bet['bet_type'] == 'small' else "B" if bet['bet_type'] == 'big' else "J"
+                            summary += f"👤 {bet['user_name']} ➖ {bet_type_display} {bet['amount']:,} ({multiplier})\n"
+                    else:
+                        summary += "❌ လောင်းကြေးမရှိပါ\n"
                     
                     await context.bot.send_message(chat_id=GAME_GROUP_ID, text=summary, parse_mode='Markdown')
                     
@@ -566,6 +583,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     
                     context.chat_data['awaiting_dice'] = game['game_id']
+                    print(f"Game {game['game_id']} manually closed, awaiting dice")
             
             elif data in ['owner_small', 'owner_big', 'owner_japort']:
                 result_type = data.replace('owner_', '')
@@ -576,11 +594,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.message.reply_text("❌ လက်ရှိ ဂိမ်းမရှိပါ။")
                     return
                 
+                print(f"Manual result: {result_type} for game {game_id}")
+                
                 # Remove any scheduled auto close job
                 current_jobs = context.job_queue.get_jobs_by_name(f"close_game_{game_id}")
                 for job in current_jobs:
                     job.schedule_removal()
                 
+                # Update bet results
                 winners = update_bet_results(game_id, result_type)
                 
                 # Process winners
@@ -592,18 +613,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result_text += f"  **Manual Result:** {result_display} {multiplier_display}\n"
                 result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
                 
-                for bet in winners:
-                    multiplier = 5 if result_type == 'japort' else 2
-                    winnings = bet[4] * multiplier
-                    new_balance = update_balance(bet[2], winnings, 'add')
-                    
-                    user_info = get_user(bet[2])
-                    
-                    # Get previous balance (current - winnings)
-                    prev_balance = new_balance - winnings
-                    
-                    result_text += f"👤 {user_info['name']} ➖ {result_display} > {bet[4]:,}(လောင်းကြေး) + {winnings - bet[4]:,}(ဒိုင်လျော်ကြေး) = {winnings:,}(နိုင်ကြေး)\n"
-                    result_text += f"💰 **လက်ကျန်ငွေ** ➖ {prev_balance:,} + {winnings:,} = {new_balance:,}Ks\n\n"
+                if winners:
+                    for bet in winners:
+                        multiplier = 5 if result_type == 'japort' else 2
+                        winnings = bet[4] * multiplier
+                        new_balance = update_balance(bet[2], winnings, 'add')
+                        
+                        user_info = get_user(bet[2])
+                        
+                        # Get previous balance (current - winnings)
+                        prev_balance = new_balance - winnings
+                        
+                        result_text += f"👤 {user_info['name']} ➖ {result_display} > {bet[4]:,}(လောင်းကြေး) + {winnings - bet[4]:,}(ဒိုင်လျော်ကြေး) = {winnings:,}(နိုင်ကြေး)\n"
+                        result_text += f"💰 **လက်ကျန်ငွေ** ➖ {prev_balance:,} + {winnings:,} = {new_balance:,}Ks\n\n"
+                else:
+                    result_text += "❌ အနိုင်ရသူမရှိပါ\n"
                 
                 await context.bot.send_message(
                     chat_id=GAME_GROUP_ID,
@@ -626,7 +650,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 )
                 
-                del context.chat_data['awaiting_dice']
+                # Clear chat data
+                if 'awaiting_dice' in context.chat_data:
+                    del context.chat_data['awaiting_dice']
+                if 'dice1' in context.chat_data:
+                    del context.chat_data['dice1']
+                if 'dice2' in context.chat_data:
+                    del context.chat_data['dice2']
+                
+                print(f"Game {game_id} completed manually")
         else:
             await query.answer("❌ ဤခလုတ်သည် ပိုင်ရှင်အတွက်သာဖြစ်ပြီး သင်နှိပ်၍မရပါ။", show_alert=True)
         return
@@ -1061,18 +1093,21 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
                     
                     # Process winners and calculate winnings
-                    for bet in winners:
-                        multiplier = 5 if result_type == 'japort' else 2
-                        winnings = bet[4] * multiplier
-                        new_balance = update_balance(bet[2], winnings, 'add')
-                        
-                        user_info = get_user(bet[2])
-                        
-                        # Get previous balance (current - winnings)
-                        prev_balance = new_balance - winnings
-                        
-                        result_text += f"👤 {user_info['name']} ➖ {result_display} > {bet[4]:,}(လောင်းကြေး) + {winnings - bet[4]:,}(ဒိုင်လျော်ကြေး) = {winnings:,}(နိုင်ကြေး)\n"
-                        result_text += f"💰 **လက်ကျန်ငွေ** ➖ {prev_balance:,} + {winnings:,} = {new_balance:,}Ks\n\n"
+                    if winners:
+                        for bet in winners:
+                            multiplier = 5 if result_type == 'japort' else 2
+                            winnings = bet[4] * multiplier
+                            new_balance = update_balance(bet[2], winnings, 'add')
+                            
+                            user_info = get_user(bet[2])
+                            
+                            # Get previous balance (current - winnings)
+                            prev_balance = new_balance - winnings
+                            
+                            result_text += f"👤 {user_info['name']} ➖ {result_display} > {bet[4]:,}(လောင်းကြေး) + {winnings - bet[4]:,}(ဒိုင်လျော်ကြေး) = {winnings:,}(နိုင်ကြေး)\n"
+                            result_text += f"💰 **လက်ကျန်ငွေ** ➖ {prev_balance:,} + {winnings:,} = {new_balance:,}Ks\n\n"
+                    else:
+                        result_text += "❌ အနိုင်ရသူမရှိပါ\n"
                     
                     # Send result
                     await context.bot.send_message(
@@ -1103,7 +1138,12 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     del context.chat_data['dice2_msg_id']
                     del context.chat_data['awaiting_dice']
                     
-                    print("✅ Game completed and cleaned up")
+                    print(f"✅ Game {game_id} completed and cleaned up")
+                else:
+                    print("No awaiting dice game found")
+                    # Clear dice data
+                    del context.chat_data['dice1']
+                    del context.chat_data['dice2']
 
 # ==================== MAIN ====================
 def main():
