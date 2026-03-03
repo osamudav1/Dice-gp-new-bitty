@@ -403,94 +403,94 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ===== GAME GROUP =====
     if chat.id == GAME_GROUP_ID:
-        # Check if this is a deposit/withdraw command from owner (replying to user's message)
+        # Check if this is a deposit/withdraw command from owner
         if user.id == OWNER_ID and update.message.reply_to_message:
             replied = update.message.reply_to_message
             
-            # Try to extract user ID from replied message (could be user's own message or bot's message)
-            target_user_id = None
+            # Get the user who sent the original message (the one being replied to)
+            target_user = replied.from_user
+            target_user_id = target_user.id
             
-            # If replying to bot's message (like account info)
-            if replied.from_user.id == context.bot.id:
+            # If replying to bot's message, try to extract user ID from text
+            if target_user.id == context.bot.id:
+                # Try to extract user ID from bot message
                 match = re.search(r'ID[ -]+`?(\d+)`?', replied.text)
                 if match:
-                    target_user_id = match.group(1)
-            else:
-                # If replying to user's message directly, get their ID
-                target_user_id = replied.from_user.id
+                    target_user_id = int(match.group(1))
+                else:
+                    await update.message.reply_text("❌ Bot စာထဲက User ID ကို ရှာမတွေ့ပါ")
+                    return
             
-            if target_user_id:
-                if text.startswith('+'):
-                    try:
-                        amount = int(text[1:])
-                        user_data = get_user(target_user_id)
-                        if not user_data:
-                            await update.message.reply_text("❌ User ID မတွေ့ပါ")
-                            return
-                        
-                        prev_balance = user_data['balance']
-                        new_balance = update_balance(target_user_id, amount, 'add')
-                        update_today_stats(target_user_id, 'today_deposit', amount)
-                        
-                        # Send detailed info to owner (private reply)
-                        await update.message.reply_text(
-                            f"✅ **ငွေသွင်းပြီးပါပြီ**\n\n"
-                            f"👤 {user_data['name']}\n"
-                            f"🆔 `{target_user_id}`\n"
-                            f"📢 {user_data['mention']}\n"
-                            f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
-                            f"💰 ထည့်ငွေ: +{amount:,} ကျပ်\n"
-                            f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
-                            parse_mode='Markdown'
-                        )
-                        
-                        # Send public announcement to group
-                        await context.bot.send_message(
-                            chat_id=GAME_GROUP_ID,
-                            text=f"👤 {user_data['name']} အကောင့်ထဲသို့ {amount:,} ကျပ် ထည့်သွင်းပေးလိုက်ပါပြီ။\n🎲 ဂိမ်းစတင်ကစားနိုင်ပါပြီ။"
-                        )
-                        
-                    except ValueError:
-                        await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းထည့်ပါ")
-                
-                elif text.startswith('-'):
-                    try:
-                        amount = int(text[1:])
-                        user_data = get_user(target_user_id)
-                        if not user_data:
-                            await update.message.reply_text("❌ User ID မတွေ့ပါ")
-                            return
-                        
-                        if user_data['balance'] < amount:
-                            await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
-                            return
-                        
-                        prev_balance = user_data['balance']
-                        new_balance = update_balance(target_user_id, amount, 'subtract')
-                        update_today_stats(target_user_id, 'today_withdraw', amount)
-                        
-                        # Send detailed info to owner (private reply)
-                        await update.message.reply_text(
-                            f"✅ **ငွေထုတ်ပြီးပါပြီ**\n\n"
-                            f"👤 {user_data['name']}\n"
-                            f"🆔 `{target_user_id}`\n"
-                            f"📢 {user_data['mention']}\n"
-                            f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
-                            f"💸 ထုတ်ငွေ: -{amount:,} ကျပ်\n"
-                            f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
-                            parse_mode='Markdown'
-                        )
-                        
-                        # Send public announcement to group
-                        await context.bot.send_message(
-                            chat_id=GAME_GROUP_ID,
-                            text=f"🧊 {user_data['name']} သင်ထုတ်ယူငွေ {amount:,} ကျပ်ကို သင့် KPay/Wave အကောင့်ထဲသို့ လွဲပေးပြီးပါပြီ။ စစ်ဆေးပေးပါ။ 🧊"
-                        )
-                        
-                    except ValueError:
-                        await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းထည့်ပါ")
-                
+            # Get user data
+            user_data = get_user(target_user_id)
+            if not user_data:
+                await update.message.reply_text("❌ User ID မတွေ့ပါ။ User က bot ကို /start လုပ်ထားဖို့လိုပါတယ်။")
                 return
+            
+            # Process deposit/withdraw
+            if text.startswith('+'):
+                try:
+                    amount = int(text[1:])
+                    
+                    prev_balance = user_data['balance']
+                    new_balance = update_balance(target_user_id, amount, 'add')
+                    update_today_stats(target_user_id, 'today_deposit', amount)
+                    
+                    # Send detailed info to owner (as reply)
+                    await update.message.reply_text(
+                        f"✅ **ငွေသွင်းပြီးပါပြီ**\n\n"
+                        f"👤 {user_data['name']}\n"
+                        f"🆔 `{target_user_id}`\n"
+                        f"📢 {user_data['mention']}\n"
+                        f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
+                        f"💰 ထည့်ငွေ: +{amount:,} ကျပ်\n"
+                        f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
+                        parse_mode='Markdown'
+                    )
+                    
+                    # Send public announcement to group
+                    await context.bot.send_message(
+                        chat_id=GAME_GROUP_ID,
+                        text=f"👤 {user_data['name']} အကောင့်ထဲသို့ {amount:,} ကျပ် ထည့်သွင်းပေးလိုက်ပါပြီ။\n🎲 ဂိမ်းစတင်ကစားနိုင်ပါပြီ။"
+                    )
+                    
+                except ValueError:
+                    await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းထည့်ပါ")
+            
+            elif text.startswith('-'):
+                try:
+                    amount = int(text[1:])
+                    
+                    if user_data['balance'] < amount:
+                        await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
+                        return
+                    
+                    prev_balance = user_data['balance']
+                    new_balance = update_balance(target_user_id, amount, 'subtract')
+                    update_today_stats(target_user_id, 'today_withdraw', amount)
+                    
+                    # Send detailed info to owner
+                    await update.message.reply_text(
+                        f"✅ **ငွေထုတ်ပြီးပါပြီ**\n\n"
+                        f"👤 {user_data['name']}\n"
+                        f"🆔 `{target_user_id}`\n"
+                        f"📢 {user_data['mention']}\n"
+                        f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
+                        f"💸 ထုတ်ငွေ: -{amount:,} ကျပ်\n"
+                        f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
+                        parse_mode='Markdown'
+                    )
+                    
+                    # Send public announcement to group
+                    await context.bot.send_message(
+                        chat_id=GAME_GROUP_ID,
+                        text=f"🧊 {user_data['name']} သင်ထုတ်ယူငွေ {amount:,} ကျပ်ကို သင့် KPay/Wave အကောင့်ထဲသို့ လွဲပေးပြီးပါပြီ။ စစ်ဆေးပေးပါ။ 🧊"
+                    )
+                    
+                except ValueError:
+                    await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းထည့်ပါ")
+            
+            return
         
         # Regular betting
         game = get_current_game()
@@ -538,6 +538,10 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message.dice:
             dice_value = update.message.dice.value
             print(f"DICE: {dice_value}")
+            
+            # Telegram က အံစာတုံးကို လှည့်ပြီးမှသာ value ကိုပေးတာဖြစ်လို့
+            # ဒီမှာ တန်ဖိုးကို တိုက်ရိုက်ယူလိုက်ရုံပါဘဲ
+            # (အံစာတုံးလှည့်တာ ပြီးသွားမှပဲ ဒီ handler ကို ရောက်လာတာပါ)
             
             if 'dice1' not in context.chat_data:
                 context.chat_data['dice1'] = dice_value
@@ -622,21 +626,24 @@ def main():
     print(f"👑 OWNER ID: {OWNER_ID}")
     print(f"🎮 GAME GROUP: {GAME_GROUP_ID}")
     print("=" * 60)
-    print("✅ GAME GROUP FEATURES:")
-    print("   - Owner sees: 🎮 ဂိမ်းစတင်ရန် / ⏹️ ဂိမ်းပိတ်ရန် buttons")
-    print("   - Game start → Betting open")
-    print("   - Game stop → Show bet list → Ask for 2 dice")
-    print("   - Owner rolls dice → Auto calculate winners")
-    print("   - Update balances")
+    print("✅ GAME CONTROL:")
+    print("   - Owner /start in group → See control buttons")
+    print("   - 🎮 ဂိမ်းစတင်ရန် → Start new game")
+    print("   - ⏹️ ဂိမ်းပိတ်ရန် → Close betting, show list, ask for dice")
     print("=" * 60)
     print("✅ BETTING:")
-    print("   - User: S1000 → Bot replies with confirmation")
+    print("   - Users: S100, B100, J100")
+    print("   - Bot replies with confirmation")
+    print("=" * 60)
+    print("✅ DICE:")
+    print("   - Owner sends 2 dice (waits for each to finish rolling)")
+    print("   - Bot calculates result and winners")
+    print("   - Updates balances automatically")
     print("=" * 60)
     print("✅ DEPOSIT/WITHDRAW:")
-    print("   - Reply to user's message with:")
-    print("   - +amount → Add money")
-    print("   - -amount → Remove money (checks balance)")
-    print("   - Bot shows details to owner + public announcement")
+    print("   - Reply to ANY user's message with:")
+    print("   - +amount → Add money (shows details to owner + public announce)")
+    print("   - -amount → Remove money (checks balance first)")
     print("=" * 60)
     
     app.run_polling(allowed_updates=Update.ALL_TYPES)
