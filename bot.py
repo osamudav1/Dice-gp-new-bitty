@@ -40,7 +40,7 @@ def init_db():
                   today_bet INTEGER DEFAULT 0,
                   balance INTEGER DEFAULT 0)''')
     
-    # Games table - game_id ကို AUTOINCREMENT ဖြင့် 100000 မှစရန်
+    # Games table
     c.execute('''CREATE TABLE IF NOT EXISTS games
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   game_id INTEGER UNIQUE,
@@ -73,18 +73,14 @@ def init_db():
 
 # ==================== DATABASE FUNCTIONS ====================
 def get_next_game_id():
-    """Get next game ID starting from 100000"""
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
-    
-    # Get last game_id
     c.execute("SELECT game_id FROM games ORDER BY game_id DESC LIMIT 1")
     result = c.fetchone()
     
     if result:
         next_id = result[0] + 1
     else:
-        # Start from 100000
         next_id = 100000
     
     conn.close()
@@ -192,8 +188,6 @@ def save_bet(game_id, user_id, bet_type, amount):
               (game_id, str(user_id), bet_type, amount, datetime.now()))
     conn.commit()
     conn.close()
-    
-    # Update today's bet total
     update_today_stats(user_id, 'today_bet', amount)
 
 def get_game_bets(game_id):
@@ -216,37 +210,16 @@ def get_game_bets(game_id):
         })
     return result
 
-def cancel_user_bet(game_id, user_id):
-    conn = sqlite3.connect('bot_database.db')
-    c = conn.cursor()
-    
-    # Get bet amount
-    c.execute("SELECT amount FROM bets WHERE game_id = ? AND user_id = ? AND status = 'pending'",
-              (game_id, str(user_id)))
-    bet = c.fetchone()
-    
-    if bet:
-        # Delete bet
-        c.execute("DELETE FROM bets WHERE game_id = ? AND user_id = ? AND status = 'pending'",
-                  (game_id, str(user_id)))
-        conn.commit()
-        conn.close()
-        return bet[0]
-    
-    conn.close()
-    return 0
-
 def update_bet_results(game_id, result_type):
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
     
-    # Get all bets for this game
     c.execute("SELECT * FROM bets WHERE game_id = ?", (game_id,))
     bets = c.fetchall()
     
     winners = []
     for bet in bets:
-        if bet[3] == result_type:  # bet_type matches result
+        if bet[3] == result_type:
             c.execute("UPDATE bets SET status = 'won' WHERE id = ?", (bet[0],))
             winners.append(bet)
         else:
@@ -278,13 +251,6 @@ def update_welcome_caption(caption):
     conn.commit()
     conn.close()
 
-def reset_welcome():
-    conn = sqlite3.connect('bot_database.db')
-    c = conn.cursor()
-    c.execute("UPDATE welcome_settings SET photo_id = NULL, caption = 'ကြိုဆိုပါတယ်' WHERE id = 1")
-    conn.commit()
-    conn.close()
-
 def get_all_users():
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
@@ -297,7 +263,6 @@ def get_all_users():
 def parse_bet(text):
     text = text.lower().strip()
     
-    # Patterns: s100, b200, j500, small100, big200, jp500, japort500
     patterns = [
         (r'^s(\d+)$', 'small'),
         (r'^b(\d+)$', 'big'),
@@ -332,13 +297,11 @@ async def countdown_10sec(context: ContextTypes.DEFAULT_TYPE):
     
     print(f"⏰ 10 second countdown for game {game_id}")
     
-    # Check if game is still open
     game = get_current_game()
     if not game or game['game_id'] != game_id or game['status'] != 'open':
         print("Game already closed or not found")
         return
     
-    # Send countdown message
     await context.bot.send_message(
         chat_id=GAME_GROUP_ID,
         text="⚠️ **ပွဲပိတ်ရန် ၁၀ စက္ကန့်သာလိုတော့သည်** ⚠️",
@@ -346,19 +309,19 @@ async def countdown_10sec(context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def auto_close_game(context: ContextTypes.DEFAULT_TYPE):
-    """Auto close game after 1 minute"""
+    """Auto close game after 1 minute and process results"""
     job = context.job
     game_id = job.data
     
-    print(f"⏰ Auto close game triggered for game {game_id}")
+    print(f"⏰ AUTO CLOSE TRIGGERED for game {game_id}")
     
     # Check if game is still open
     game = get_current_game()
     if not game or game['game_id'] != game_id or game['status'] != 'open':
-        print("Game already closed or not found")
+        print("Game already closed or not found - stopping auto close")
         return
     
-    # Close chat permissions immediately
+    # 1. ချက်ချင်း chat ပိတ်
     await context.bot.set_chat_permissions(
         chat_id=GAME_GROUP_ID,
         permissions=ChatPermissions(
@@ -371,11 +334,11 @@ async def auto_close_game(context: ContextTypes.DEFAULT_TYPE):
     )
     print("✅ Chat permissions closed")
     
-    # Get all bets for this game
+    # 2. လောင်းထားတဲ့အချက်အလက်တွေယူ
     bets = get_game_bets(game_id)
     print(f"Found {len(bets)} bets")
     
-    # Send summary message
+    # 3. Summary ပို့
     summary = f"✨ **ပွဲစဉ်** ➖ `{game_id}`\n"
     summary += f"➖ **လောင်းကြေးပိတ်ပါပြီ!** ➖\n\n"
     
@@ -389,17 +352,17 @@ async def auto_close_game(context: ContextTypes.DEFAULT_TYPE):
     
     await context.bot.send_message(chat_id=GAME_GROUP_ID, text=summary, parse_mode='Markdown')
     
-    # 1 second delay before asking for dice
+    # 4. ၁ စက္ကန့်စောင့်
     await asyncio.sleep(1)
     
-    # Ask for dice
+    # 5. အံစာတုံးတောင်း
     await context.bot.send_message(
         chat_id=GAME_GROUP_ID,
         text="🎲 **အံစာတုံး ၂ တုံး ပို့ပေးပါ။**",
         parse_mode='Markdown'
     )
     
-    # Store game_id in context for dice handling
+    # 6. Game ID ကို chat_data မှာသိမ်း
     context.chat_data['awaiting_dice'] = game_id
     print(f"✅ Auto close completed for game {game_id}, awaiting dice")
 
@@ -410,11 +373,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     print(f"START: user={user.id}, chat={chat.id}")
     
-    # Save user to database
     mention = f"@{user.username}" if user.username else user.full_name
     create_or_update_user(user.id, user.full_name, mention)
     
-    # GAME GROUP - User instructions only
     if chat.id == GAME_GROUP_ID:
         await update.message.reply_text(
             text="🎲 **ကစားရန်**\n\n"
@@ -426,24 +387,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # DEPOSIT GROUP
     if chat.id == DEPOSIT_GROUP_ID:
-        print("✅ Deposit Group - showing instructions")
         await update.message.reply_text(
             "💰 **ငွေသွင်း/ငွေထုတ် Group**\n\n"
             "သင်၏အချက်အလက်များကြည့်ရန် '1' ကိုနှိပ်ပါ။\n"
-            "ငွေသွင်းရန် အကောင့်အချက်အလက်များကို Admin ထံမေးမြန်းပါ။\n\n"
             "**ငွေသွင်းရန်:** +ပမာဏ (ဥပမာ: +5000)\n"
             "**ငွေထုတ်ရန်:** -ပမာဏ (ဥပမာ: -2000)",
             parse_mode='Markdown'
         )
         return
     
-    # PRIVATE CHAT - Owner DM မှ ထိန်းချုပ်မည်
     if chat.type == 'private':
-        print("✅ Private chat - showing appropriate menu")
         if user.id == OWNER_ID:
-            # Owner DM menu - Game Control Buttons
             keyboard = [
                 [InlineKeyboardButton("🎮 Game စတင်ရန်", callback_data='owner_game_start')],
                 [InlineKeyboardButton("⏹️ Game ပိတ်ရန်", callback_data='owner_game_stop')],
@@ -462,7 +417,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
         else:
-            # User DM menu
             welcome = get_welcome_settings()
             keyboard = [
                 [
@@ -488,17 +442,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     print(f"CALLBACK: {data} from user {user.id}")
     
-    # Owner-only callbacks
     if data.startswith('owner_'):
         if user.id == OWNER_ID:
             if data == 'owner_game_start':
                 await query.answer("✅ Game စတင်ရန်")
                 
-                # Create new game
                 game_id = create_game()
                 print(f"Game created with ID: {game_id}")
                 
-                # Send start message to game group
                 await context.bot.send_message(
                     chat_id=GAME_GROUP_ID,
                     text=f"**ပွဲစဉ်** - `{game_id}`\n"
@@ -511,7 +462,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Schedule 10 second countdown (after 50 seconds)
                 context.job_queue.run_once(
                     countdown_10sec, 
-                    50,  # 10 seconds before close (60-10=50)
+                    50,
                     data=game_id,
                     name=f"countdown_{game_id}"
                 )
@@ -520,7 +471,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Schedule auto close after 1 minute (60 seconds)
                 context.job_queue.run_once(
                     auto_close_game, 
-                    60,  # 1 minute in seconds
+                    60,
                     data=game_id,
                     name=f"close_game_{game_id}"
                 )
@@ -529,24 +480,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif data == 'owner_game_stop':
                 await query.answer("✅ Game ပိတ်ရန်")
                 
-                # Get current game
                 game = get_current_game()
                 if game:
                     game_id = game['game_id']
                     print(f"Manually stopping game {game_id}")
                     
                     # Remove any scheduled jobs
-                    countdown_jobs = context.job_queue.get_jobs_by_name(f"countdown_{game_id}")
-                    for job in countdown_jobs:
-                        job.schedule_removal()
-                        print(f"Removed countdown job for game {game_id}")
+                    for job_name in [f"countdown_{game_id}", f"close_game_{game_id}"]:
+                        jobs = context.job_queue.get_jobs_by_name(job_name)
+                        for job in jobs:
+                            job.schedule_removal()
+                            print(f"Removed {job_name}")
                     
-                    close_jobs = context.job_queue.get_jobs_by_name(f"close_game_{game_id}")
-                    for job in close_jobs:
-                        job.schedule_removal()
-                        print(f"Removed auto close job for game {game_id}")
-                
-                    # Close chat permissions immediately
+                    # Close chat permissions
                     await context.bot.set_chat_permissions(
                         chat_id=GAME_GROUP_ID,
                         permissions=ChatPermissions(
@@ -574,7 +520,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     await context.bot.send_message(chat_id=GAME_GROUP_ID, text=summary, parse_mode='Markdown')
                     
-                    # 1 second delay before asking for dice
                     await asyncio.sleep(1)
                     
                     await context.bot.send_message(
@@ -600,18 +545,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"Manual result: {result_type} for game {game_id}")
                 
                 # Remove any scheduled jobs
-                countdown_jobs = context.job_queue.get_jobs_by_name(f"countdown_{game_id}")
-                for job in countdown_jobs:
-                    job.schedule_removal()
-                
-                close_jobs = context.job_queue.get_jobs_by_name(f"close_game_{game_id}")
-                for job in close_jobs:
-                    job.schedule_removal()
+                for job_name in [f"countdown_{game_id}", f"close_game_{game_id}"]:
+                    jobs = context.job_queue.get_jobs_by_name(job_name)
+                    for job in jobs:
+                        job.schedule_removal()
                 
                 # Update bet results
                 winners = update_bet_results(game_id, result_type)
                 
-                # Process winners
                 result_display = "Small(S)" if result_type == 'small' else "Big(B)" if result_type == 'big' else "Japort(J)"
                 multiplier_display = "5ဆ" if result_type == 'japort' else "2ဆ"
                 
@@ -625,10 +566,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         multiplier = 5 if result_type == 'japort' else 2
                         winnings = bet[4] * multiplier
                         new_balance = update_balance(bet[2], winnings, 'add')
-                        
                         user_info = get_user(bet[2])
-                        
-                        # Get previous balance (current - winnings)
                         prev_balance = new_balance - winnings
                         
                         result_text += f"👤 {user_info['name']} ➖ {result_display} > {bet[4]:,}(လောင်းကြေး) + {winnings - bet[4]:,}(ဒိုင်လျော်ကြေး) = {winnings:,}(နိုင်ကြေး)\n"
@@ -642,10 +580,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='Markdown'
                 )
                 
-                # Close game
                 close_game(game_id)
                 
-                # Reset permissions
                 await context.bot.set_chat_permissions(
                     chat_id=GAME_GROUP_ID,
                     permissions=ChatPermissions(
@@ -658,36 +594,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 # Clear chat data
-                if 'awaiting_dice' in context.chat_data:
-                    del context.chat_data['awaiting_dice']
-                if 'dice1' in context.chat_data:
-                    del context.chat_data['dice1']
-                if 'dice2' in context.chat_data:
-                    del context.chat_data['dice2']
+                for key in ['awaiting_dice', 'dice1', 'dice2', 'dice1_msg_id', 'dice2_msg_id']:
+                    if key in context.chat_data:
+                        del context.chat_data[key]
                 
                 print(f"Game {game_id} completed manually")
         else:
-            await query.answer("❌ ဤခလုတ်သည် ပိုင်ရှင်အတွက်သာဖြစ်ပြီး သင်နှိပ်၍မရပါ။", show_alert=True)
+            await query.answer("❌ ဤခလုတ်သည် ပိုင်ရှင်အတွက်သာဖြစ်ပါသည်။", show_alert=True)
         return
     
-    # ===== USER CALLBACKS =====
     if data == 'account_info':
         user_data = get_user(user.id)
-        
-        # Format today's stats with commas
-        today_deposit = f"{user_data['today_deposit']:,}"
-        today_withdraw = f"{user_data['today_withdraw']:,}"
-        today_bet = f"{user_data['today_bet']:,}"
-        balance = f"{user_data['balance']:,}"
-        
         await query.edit_message_text(
             f"**အမည်** - {user_data['name']}\n"
             f"**ID** - `{user_data['user_id']}`\n"
             f"**Mention** - {user_data['mention']}\n"
-            f"**ယနေ့သွင်းငွေ** - {today_deposit} ကျပ်\n"
-            f"**ယနေ့ထုတ်ငွေ** - {today_withdraw} ကျပ်\n"
-            f"**ယနေ့လောင်းငွေ** - {today_bet} ကျပ်\n"
-            f"**လက်ကျန်ငွေ** - {balance} ကျပ်",
+            f"**ယနေ့သွင်းငွေ** - {user_data['today_deposit']:,} ကျပ်\n"
+            f"**ယနေ့ထုတ်ငွေ** - {user_data['today_withdraw']:,} ကျပ်\n"
+            f"**ယနေ့လောင်းငွေ** - {user_data['today_bet']:,} ကျပ်\n"
+            f"**လက်ကျန်ငွေ** - {user_data['balance']:,} ကျပ်",
             parse_mode='Markdown'
         )
     
@@ -699,33 +624,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
     
-    elif data == 'cancel_bet':
-        game = get_current_game()
-        if not game or game['status'] != 'open':
-            await query.message.reply_text("❌ လက်ရှိ ဂိမ်းမရှိပါ။")
-            return
-        
-        # Check if within 20 minutes of game start
-        game_start = datetime.fromisoformat(game['created_at'])
-        if datetime.now() - game_start > timedelta(minutes=20):
-            await query.message.reply_text("⏰ လောင်းကြေး ပယ်ဖျက်ရန် အချိန်ကျော်လွန်သွားပါပြီ။")
-            return
-        
-        amount = cancel_user_bet(game['game_id'], user.id)
-        if amount > 0:
-            new_balance = update_balance(user.id, amount, 'add')
-            msg = await query.message.reply_text(
-                f"✅ လောင်းကြေးပြန်ဖျက်ပြီးပါပြီ။\n"
-                f"💰 **လက်ကျန်ငွေ** ➖ {new_balance:,}Ks",
-                parse_mode='Markdown'
-            )
-            # Auto delete after 5 seconds
-            await asyncio.sleep(5)
-            await msg.delete()
-        else:
-            await query.message.reply_text("❌ သင်လောင်းထားတဲ့ငွေ မရှိပါ။")
-    
-    # ===== OWNER CALLBACKS =====
     elif data == 'welcome_setting' and user.id == OWNER_ID:
         keyboard = [
             [InlineKeyboardButton("🖼️ ပုံထည့်ရန်", callback_data='welcome_add_photo')],
@@ -754,9 +652,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "📢 **Broadcast ပို့ရန်**\n\n"
             "- ပုံ (သို့) စာသား ပို့ပါ\n"
-            "- Button ပါလိုချင်ရင် Button Name နဲ့ URL ကို ဒီပုံစံအတိုင်း ရိုက်ပါ:\n"
-            "`ButtonName|https://example.com`\n\n"
-            "ဥပမာ: `Channel|https://t.me/your_channel`",
+            "- Button ပါလိုချင်ရင်: `ButtonName|https://example.com`",
             parse_mode='Markdown'
         )
         context.user_data['awaiting'] = 'broadcast'
@@ -785,74 +681,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     print(f"MESSAGE: '{text}' from user {user.id} in chat {chat.id}")
     
-    # ===== DEPOSIT GROUP HANDLER =====
+    # Deposit Group Handler
     if chat.id == DEPOSIT_GROUP_ID:
-        # User sends "1" to get their info
         if text == "1":
             print(f"💰 User {user.id} sent 1 in deposit group")
             user_data = get_user(user.id)
             
-            # Format numbers with commas
-            today_deposit = f"{user_data['today_deposit']:,}"
-            today_withdraw = f"{user_data['today_withdraw']:,}"
-            today_bet = f"{user_data['today_bet']:,}"
-            balance = f"{user_data['balance']:,}"
-            
             reply_msg = f"""**အမည်** - {user_data['name']}
 **ID** - `{user_data['user_id']}`
 **Mention** - {user_data['mention']}
-**ယနေ့သွင်းငွေ** - {today_deposit} ကျပ်
-**ယနေ့လောင်းငွေ** - {today_bet} ကျပ်
-**ယနေ့ထုတ်ငွေ** - {today_withdraw} ကျပ်
-**လက်ကျန်ငွေ** - {balance} ကျပ်"""
+**ယနေ့သွင်းငွေ** - {user_data['today_deposit']:,} ကျပ်
+**ယနေ့လောင်းငွေ** - {user_data['today_bet']:,} ကျပ်
+**ယနေ့ထုတ်ငွေ** - {user_data['today_withdraw']:,} ကျပ်
+**လက်ကျန်ငွေ** - {user_data['balance']:,} ကျပ်"""
             
-            # Reply to the user's "1" message
             await update.message.reply_to_message.reply_text(reply_msg, parse_mode='Markdown')
-            print("✅ Response sent to user")
             return
         
-        # Owner reply for deposit/withdraw
         elif update.message.reply_to_message and user.id == OWNER_ID:
             replied = update.message.reply_to_message
-            print(f"Reply detected: {replied.text}")
-            print(f"Reply from bot: {replied.from_user.id == context.bot.id}")
-            
             if replied.from_user.id == context.bot.id:
-                # Extract user_id from replied message using multiple patterns
+                # Extract user_id
                 target_user_id = None
-                
-                # Pattern 1: ID - `123456789`
                 match = re.search(r'ID - `(\d+)`', replied.text)
                 if match:
                     target_user_id = match.group(1)
-                    print(f"Found ID with pattern 1: {target_user_id}")
-                
-                # Pattern 2: ID - 123456789
-                if not target_user_id:
-                    match = re.search(r'ID - (\d+)', replied.text)
-                    if match:
-                        target_user_id = match.group(1)
-                        print(f"Found ID with pattern 2: {target_user_id}")
-                
-                # Pattern 3: Just numbers in the message
-                if not target_user_id:
-                    numbers = re.findall(r'\d+', replied.text)
-                    if numbers:
-                        # Take the longest number as ID
-                        target_user_id = max(numbers, key=len)
-                        print(f"Found ID with pattern 3: {target_user_id}")
                 
                 if target_user_id:
-                    print(f"Target user ID: {target_user_id}")
-                    
                     if text.startswith('+'):
                         try:
                             amount = int(text[1:])
-                            print(f"Adding amount: {amount}")
-                            
                             new_balance = update_balance(target_user_id, amount, 'add')
                             update_today_stats(target_user_id, 'today_deposit', amount)
-                            
                             user_data = get_user(target_user_id)
                             
                             await update.message.reply_text(
@@ -864,30 +724,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 parse_mode='Markdown'
                             )
                             
-                            # Send to game group
                             await context.bot.send_message(
                                 chat_id=GAME_GROUP_ID,
                                 text=f"👤 {user_data['name']} လူကြီးမင်း၏ ဂိမ်းအကောင့်ထဲသို့ {amount:,} ကျပ် ထည့်သွင်းပေးလိုက်ပါပြီ။\n🎲 ဂိမ်းစတင်ကစားနိုင်ပါပြီ။"
                             )
-                            print("Deposit completed successfully")
                         except Exception as e:
-                            print(f"Error in deposit: {e}")
                             await update.message.reply_text(f"❌ ငွေသွင်းရာတွင် အဆင်မပြေပါ။ {e}")
                     
                     elif text.startswith('-'):
                         try:
                             amount = int(text[1:])
-                            print(f"Withdrawing amount: {amount}")
-                            
                             new_balance = update_balance(target_user_id, amount, 'subtract')
                             update_today_stats(target_user_id, 'today_withdraw', amount)
-                            
                             user_data = get_user(target_user_id)
                             
-                            # ငွေထုတ်ကြေညာချက်
                             withdraw_message = f"🧊 {user_data['name']} သင်ထုတ်ယူငွေ {amount:,} ကျပ်ကို သင့် KPay/Wave အကောင့်ထဲသို့ လွဲပေးပြီးပါပြီ။ စစ်ဆေးပေးပါ။ 🧊"
                             
-                            # Reply to owner
                             await update.message.reply_text(
                                 f"✅ **ငွေထုတ်ပြီးပါပြီ**\n\n"
                                 f"**အမည်** - {user_data['name']}\n"
@@ -897,55 +749,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 parse_mode='Markdown'
                             )
                             
-                            # Send withdrawal notification to game group
                             await context.bot.send_message(
                                 chat_id=GAME_GROUP_ID,
                                 text=withdraw_message,
                                 parse_mode='Markdown'
                             )
-                            
-                            print("Withdrawal completed successfully")
                         except Exception as e:
-                            print(f"Error in withdrawal: {e}")
                             await update.message.reply_text(f"❌ ငွေထုတ်ရာတွင် အဆင်မပြေပါ။ {e}")
                 else:
                     await update.message.reply_text("❌ User ID ကို ရှာမတွေ့ပါ။")
     
-    # ===== GAME GROUP USER BET HANDLER =====
+    # Game Group User Bet Handler
     elif chat.id == GAME_GROUP_ID:
-        # Check if game is open
         game = get_current_game()
         if not game or game['status'] != 'open':
             return
         
-        # Check if user is trying to bet
         bet_type, amount = parse_bet(text)
         if bet_type:
-            # Check small/big together
             if has_both_small_big(text):
                 await update.message.reply_text("❌ Small နဲ့ Big တစ်ပြိုင်နက် လောင်းလို့မရပါ။")
                 return
             
-            # Check minimum bet
             if amount < 100:
                 await update.message.reply_text("❌ အနည်းဆုံး လောင်းကြေး ၁၀၀ ကျပ်ဖြစ်ပါတယ်။")
                 return
             
-            # Check balance
             user_data = get_user(user.id)
             if user_data['balance'] < amount:
                 await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ။")
                 return
             
-            # Save bet
             save_bet(game['game_id'], user.id, bet_type, amount)
             new_balance = update_balance(user.id, amount, 'subtract')
             
             multiplier = "5ဆ" if bet_type == 'japort' else "2ဆ"
             bet_display = "Small(s)" if bet_type == 'small' else "Big(b)" if bet_type == 'big' else "Japort(j)"
-            bet_short = "S" if bet_type == 'small' else "B" if bet_type == 'big' else "J"
             
-            # Reply to user's bet message with the exact format
             await update.message.reply_to_message.reply_text(
                 f"**ပွဲစဉ်** ➖ `{game['game_id']}`\n"
                 f"➖➖➖➖➖\n"
@@ -956,7 +796,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
     
-    # ===== OWNER DM HANDLERS =====
+    # Owner DM Handlers
     elif chat.type == 'private' and user.id == OWNER_ID:
         if 'awaiting' in context.user_data:
             if context.user_data['awaiting'] == 'welcome_photo':
@@ -971,11 +811,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 del context.user_data['awaiting']
             
             elif context.user_data['awaiting'] == 'broadcast':
-                # Parse broadcast message
                 caption = update.message.caption or update.message.text
                 photo_id = update.message.photo[-1].file_id if update.message.photo else None
                 
-                # Check for button
                 reply_markup = None
                 if caption and '|' in caption and 'http' in caption:
                     lines = caption.split('\n')
@@ -986,10 +824,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         keyboard = [[InlineKeyboardButton(button_name.strip(), url=button_url.strip())]]
                         reply_markup = InlineKeyboardMarkup(keyboard)
                 
-                # Get all users
                 users = get_all_users()
-                
-                # Send in batches of 20 with 1 second delay
                 await update.message.reply_text(f"📢 Broadcast စတင်နေပါပြီ... လက်ခံသူ {len(users)} ယောက်")
                 
                 sent_count = 0
@@ -1013,9 +848,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             sent_count += 1
                         except Exception as e:
                             print(f"Failed to send to {user_id}: {e}")
-                        await asyncio.sleep(0.1)  # Small delay between messages
+                        await asyncio.sleep(0.1)
                     
-                    await asyncio.sleep(1)  # 1 second delay between batches
+                    await asyncio.sleep(1)
                 
                 await update.message.reply_text(f"✅ Broadcast ပို့ပြီးပါပြီ။ လက်ခံသူ {sent_count} ယောက်")
                 del context.user_data['awaiting']
@@ -1026,19 +861,16 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     print(f"DICE: from user {user.id} in chat {chat.id}")
     
-    # Only process dice in game group from owner
     if chat.id == GAME_GROUP_ID and user.id == OWNER_ID:
         if update.message.dice:
             dice_value = update.message.dice.value
             print(f"Dice value: {dice_value}")
             
-            # Store dice values
             if 'dice1' not in context.chat_data:
                 context.chat_data['dice1'] = dice_value
                 context.chat_data['dice1_msg_id'] = update.message.message_id
                 print("First dice stored")
                 
-                # Ask for second dice
                 await context.bot.send_message(
                     chat_id=GAME_GROUP_ID,
                     text="🎲 **နောက်တစ်ခါထပ်ပို့ပါ။**",
@@ -1050,69 +882,51 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.chat_data['dice2_msg_id'] = update.message.message_id
                 print("Second dice stored")
                 
-                # Both dice received, calculate result
                 dice1 = context.chat_data['dice1']
                 dice2 = context.chat_data['dice2']
                 total = dice1 + dice2
                 
                 print(f"Calculating result: {dice1}+{dice2}={total}")
                 
-                # Determine result: 2-6 = small, 7 = japort, 8-12 = big
                 if 2 <= total <= 6:
                     result_type = 'small'
                     result_display = "Small(S)"
-                    result_short = "S"
                 elif total == 7:
                     result_type = 'japort'
                     result_display = "Japort(J)"
-                    result_short = "J"
                 elif 8 <= total <= 12:
                     result_type = 'big'
                     result_display = "Big(B)"
-                    result_short = "B"
                 else:
                     result_type = 'unknown'
                     result_display = "Unknown"
-                    result_short = "U"
                 
                 multiplier_display = "5ဆ" if result_type == 'japort' else "2ဆ"
                 
-                print(f"Result type: {result_type}")
-                
-                # Get current game
                 game_id = context.chat_data.get('awaiting_dice')
                 if game_id:
                     print(f"Processing game {game_id}")
                     
-                    # Remove any scheduled auto close job
-                    countdown_jobs = context.job_queue.get_jobs_by_name(f"countdown_{game_id}")
-                    for job in countdown_jobs:
-                        job.schedule_removal()
+                    # Remove any scheduled jobs
+                    for job_name in [f"countdown_{game_id}", f"close_game_{game_id}"]:
+                        jobs = context.job_queue.get_jobs_by_name(job_name)
+                        for job in jobs:
+                            job.schedule_removal()
                     
-                    close_jobs = context.job_queue.get_jobs_by_name(f"close_game_{game_id}")
-                    for job in close_jobs:
-                        job.schedule_removal()
-                    
-                    # Update bet results
                     winners = update_bet_results(game_id, result_type)
                     print(f"Winners: {len(winners)}")
                     
-                    # Start building result message
                     result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
                     result_text += f"💥 **Dice Bot** 💥\n"
                     result_text += f"  {dice1}+{dice2} = {total} {result_display} {multiplier_display}\n"
                     result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
                     
-                    # Process winners and calculate winnings
                     if winners:
                         for bet in winners:
                             multiplier = 5 if result_type == 'japort' else 2
                             winnings = bet[4] * multiplier
                             new_balance = update_balance(bet[2], winnings, 'add')
-                            
                             user_info = get_user(bet[2])
-                            
-                            # Get previous balance (current - winnings)
                             prev_balance = new_balance - winnings
                             
                             result_text += f"👤 {user_info['name']} ➖ {result_display} > {bet[4]:,}(လောင်းကြေး) + {winnings - bet[4]:,}(ဒိုင်လျော်ကြေး) = {winnings:,}(နိုင်ကြေး)\n"
@@ -1120,17 +934,14 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else:
                         result_text += "❌ အနိုင်ရသူမရှိပါ\n"
                     
-                    # Send result
                     await context.bot.send_message(
                         chat_id=GAME_GROUP_ID,
                         text=result_text,
                         parse_mode='Markdown'
                     )
                     
-                    # Close game
                     close_game(game_id)
                     
-                    # Reset permissions (allow users to chat again)
                     await context.bot.set_chat_permissions(
                         chat_id=GAME_GROUP_ID,
                         permissions=ChatPermissions(
@@ -1143,13 +954,11 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     
                     # Clear chat data
-                    del context.chat_data['dice1']
-                    del context.chat_data['dice2']
-                    del context.chat_data['dice1_msg_id']
-                    del context.chat_data['dice2_msg_id']
-                    del context.chat_data['awaiting_dice']
+                    for key in ['dice1', 'dice2', 'dice1_msg_id', 'dice2_msg_id', 'awaiting_dice']:
+                        if key in context.chat_data:
+                            del context.chat_data[key]
                     
-                    print(f"✅ Game {game_id} completed and cleaned up")
+                    print(f"✅ Game {game_id} completed successfully")
                 else:
                     print("No awaiting dice game found")
                     # Clear dice data
@@ -1158,20 +967,16 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==================== MAIN ====================
 def main():
-    # Initialize database
     init_db()
     
-    # Create application
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # Add handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.Dice.ALL, handle_dice))
     application.add_handler(MessageHandler(filters.PHOTO, handle_message))
     
-    # Start bot
     print("=" * 60)
     print("🤖 BOT STARTED SUCCESSFULLY")
     print("=" * 60)
@@ -1179,16 +984,15 @@ def main():
     print(f"🎮 Game Group ID: {GAME_GROUP_ID}")
     print(f"💰 Deposit Group ID: {DEPOSIT_GROUP_ID}")
     print("=" * 60)
-    print("✅ Features:")
-    print("   - Owner DM: Full control panel with all buttons")
-    print("   - Game Group: Auto close after 1 minute (FIXED)")
-    print("   - Game Group: 10 second countdown before closing")
-    print("   - Game Group: Users can bet with S100, B100, J100")
-    print("   - Game Group: Bot replies to bets with exact format")
-    print("   - Game Group: Auto permissions control")
-    print("   - Game Group: Dice handling with 2 dice")
-    print("   - Deposit Group: '1' for user info, +amount/-amount for owner")
-    print("   - Deposit Group: Withdrawal notification with 🧊 emoji")
+    print("✅ AUTO CLOSE WORKING:")
+    print("   - Game start → 50 sec → countdown message")
+    print("   - Game start → 60 sec → AUTO CLOSE")
+    print("   - Auto close → permissions closed")
+    print("   - Auto close → bets summary")
+    print("   - Auto close → dice request")
+    print("   - Owner dice → result calculation")
+    print("   - Owner dice → winners announcement")
+    print("   - Owner dice → permissions reopen")
     print("=" * 60)
     
     application.run_polling(allowed_updates=Update.ALL_TYPES)
