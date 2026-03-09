@@ -19,7 +19,7 @@ from telegram.ext import (
 # ==================== CONFIGURATION ====================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 OWNER_ID = int(os.environ.get("OWNER_ID", "123456789"))
-GAME_GROUP_ID = int(os.environ.get("GAME_GROUP_ID", "-1001234567890"))
+GAME_GROUP_ID = int(os.environ.get("GAME_GROUP_ID", "-1002849045181"))
 GAME_GROUP_URL = "https://t.me/your_game_group"
 
 # ==================== DATABASE SETUP ====================
