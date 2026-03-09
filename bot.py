@@ -383,7 +383,7 @@ def get_deposit_withdraw_buttons(admin_username="osamu1123"):
     return InlineKeyboardMarkup(keyboard)
 
 def get_warning_text():
-    return "⚠️ **သတိပေးချက်** ⚠️\n\nငွေသွင်းငွေထုတ်ရန်အတွက် တရားဝင်အကောင့်မှလွဲ၍ အခြားအကောင့်များသည် လူလိမ်များဖြစ်ကြပါသည်။\nUsername ကိုသေချာစစ်ဆေးပါ။"
+    return "⚠️ **သတိပေးချက်** ⚠️\n\nငွေသွင်းငွေထုတ်ရန်အတွက် \nUsername ကိုသေချာစစ်ဆေးပါ။"
 
 # ==================== COMMAND HANDLERS ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -662,9 +662,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Ask owner to send dice
             await context.bot.send_message(
                 chat_id=GAME_GROUP_ID,
-                text="🎲 **ပိုင်ရှင်သို့ အကြောင်းကြားချက်**\n\n"
+                text="🎲 pls Send Owner\n\n"
                      "ကျေးဇူးပြု၍ အံစာတုံး ၁ တုံး ပို့ပေးပါ။\n"
-                     "အံစာတုံးလှည့်ပြီး ရပ်သွားမှသာ ရလဒ်ကိုတွက်ချက်ပါမည်။",
+                     "wait ...",
                 parse_mode='Markdown'
             )
             
@@ -767,12 +767,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         pass
                     
                     await update.message.reply_text(
-                        f"✅ {user_data['name']} ထံသို့ {amount:,} ကျပ်ထည့်ပြီးပါပြီ"
+                        f"✅ {user_data['mention']} ထံသို့ {amount:,} ကျပ်ထည့်ပြီးပါပြီ"
                     )
                     
                     await context.bot.send_message(
                         chat_id=GAME_GROUP_ID,
-                        text=f"👤 {user_data['name']} အကောင့်ထဲသို့ {amount:,} ကျပ် ထည့်သွင်းပေးလိုက်ပါပြီ။\n🎲 ဂိမ်းစတင်ကစားနိုင်ပါပြီ။"
+                        text=f"👤 {user_data['mention']} အကောင့်ထဲသို့ {amount:,} ကျပ် ထည့်သွင်းပေးလိုက်ပါပြီ။\n🎲 ဂိမ်းစတင်ကစားနိုင်ပါပြီ။"
                     )
                     
                 except ValueError:
@@ -922,7 +922,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"✅ Game {game_id} closed")
             
             # Create result text for group
-            result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n"
+            result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n\n"
             result_text += f"💥 **Dice Bot** 💥\n"
             result_text += f"**အံစာတုံးရလဒ်:** {dice_value}\n"
             result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
