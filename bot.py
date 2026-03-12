@@ -376,7 +376,7 @@ def parse_bet(text):
 def get_deposit_withdraw_buttons(admin_username="osamu1123"):
     keyboard = [
         [
-            InlineKeyboardButton("🎨owner🎨", url=f"https://t.me/{owner_id}"),
+            InlineKeyboardButton("🎨owner🎨", url=f"https://t.me/{OWNER_ID}"),
             InlineKeyboardButton("💰 Giftway Channel 💰", url=f"https://t.me/addlist/Nl6SQeMQvIUxNGE9"),
         ]
     ]
