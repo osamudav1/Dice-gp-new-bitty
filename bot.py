@@ -376,14 +376,14 @@ def parse_bet(text):
 def get_deposit_withdraw_buttons(admin_username="osamu1123"):
     keyboard = [
         [
-            InlineKeyboardButton("💰 ငွေသွင်း", url=f"https://t.me/{admin_username}"),
-            InlineKeyboardButton("💸 ငွေထုတ်", url=f"https://t.me/{admin_username}")
+            InlineKeyboardButton("🎨owner🎨", url=f"https://t.me/{owner_id}"),
+            InlineKeyboardButton("💰 Giftway Channel 💰", url=f"https://t.me/addlist/Nl6SQeMQvIUxNGE9"),
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 def get_warning_text():
-    return "⚠️ **သတိပေးချက်** ⚠️\n\nငွေသွင်းငွေထုတ်ရန်အတွက် \nUsername ကိုသေချာစစ်ဆေးပါ။"
+    return "အောက်က Gift Way Channel\n\nလေးတွေကိုjoinပေးခဲ့ကြပါဦး။"
 
 # ==================== COMMAND HANDLERS ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -592,18 +592,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_photo(
                     chat_id=GAME_GROUP_ID,
                     photo=custom_image,
-                    caption=f"🎲 **ပွဲစဉ်အသစ်** - `{game_id}`\n\n"
+                    caption=f"🎲 ပွဲစဉ်အသစ် - {game_id}\n\n"
                             f"နံပါတ် ၁ မှ ၆ ထိရွေးချယ်လောင်းနိုင်ပါသည်။\n"
-                            f"တစ်ယောက် တစ်ခါသာလောင်းရမည်။\n"
+                            f"တစ်ယောက် တစ်ခါသာလောင်းနိုင်ပါသည်။\n"
                             f"အနည်းဆုံး ၂၀၀ကျပ်၊ အများဆုံး ၁၀၀၀ကျပ်",
                     parse_mode='Markdown'
                 )
             else:
                 await context.bot.send_message(
                     chat_id=GAME_GROUP_ID,
-                    text=f"🎲 **ပွဲစဉ်အသစ်** - `{game_id}`\n\n"
+                    text=f"🎲 ပွဲစဉ်အသစ် - `{game_id}`\n\n"
                          f"နံပါတ် ၁ မှ ၆ ထိရွေးချယ်လောင်းနိုင်ပါသည်။\n"
-                         f"တစ်ယောက် တစ်ခါသာလောင်းရမည်။\n"
+                         f"တစ်ယောက် တစ်ခါသာလောင်းနိုင်ပါသည်။\n"
                          f"အနည်းဆုံး ၂၀၀ကျပ်၊ အများဆုံး ၁၀၀၀ကျပ်",
                     parse_mode='Markdown'
                 )
@@ -625,17 +625,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bets = get_game_bets(game_id)
             
             # Create bet list text
-            bet_text = f"🎲 **ပွဲစဉ်** ➖ `{game_id}`\n"
-            bet_text += f"➖ **လောင်းကြေးပိတ်ပါပြီ** ➖\n\n"
+            bet_text = f"🎲 ပွဲစဉ် ➖ `{game_id}`\n"
+            bet_text += f"➖ လောင်းကြေးပိတ်ပါပြီ ➖\n\n"
             
             if bets:
                 total_bet = 0
                 for bet in bets:
                     bet_text += f"👤 {bet['user_name']} ➖ နံပါတ် {bet['bet_number']} - {bet['amount']:,} ကျပ်\n"
                     total_bet += bet['amount']
-                bet_text += f"\n**စုစုပေါင်းလောင်းငွေ:** {total_bet:,} ကျပ်"
+                bet_text += f"\nစုစုပေါင်းလောင်းငွေ: {total_bet:,} ကျပ်"
             else:
-                bet_text += "❌ လောင်းကြေးမရှိပါ\n"
+                bet_text += "😢 လောင်းကြေးမရှိပါ 😢\n"
             
             custom_image = get_game_image('game_stop')
             if custom_image:
@@ -772,7 +772,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     await context.bot.send_message(
                         chat_id=GAME_GROUP_ID,
-                        text=f"👤 {user_data['mention']} အကောင့်ထဲသို့ {amount:,} ကျပ် ထည့်သွင်းပေးလိုက်ပါပြီ။\n🎲 ဂိမ်းစတင်ကစားနိုင်ပါပြီ။"
+                        text=f"👤 {user_data['mention']} အကောင့်ထဲသို့\n {amount:,} ကျပ် ထည့်သွင်းပေးလိုက်ပါပြီ။\n🎲 ဂိမ်းစတင်ကစားနိုင်ပါပြီ။"
                     )
                     
                 except ValueError:
@@ -831,9 +831,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             bets_text += f"နံပါတ် {bet[3]} - {bet[4]:,} ကျပ်\n"
                 
                 msg = await update.message.reply_to_message.reply_text(
-                    f"**အမည်** - {user_data['name']}\n"
-                    f"**ID** - `{user_data['user_id']}`\n"
-                    f"**လက်ကျန်ငွေ** - {user_data['balance']:,} ကျပ်"
+                    f"အမည် - {user_data['name']}\n"
+                    f"ID - `{user_data['user_id']}`\n"
+                    f"လက်ကျန်ငွေ - {user_data['balance']:,} ကျပ်"
                     f"{bets_text}",
                     parse_mode='Markdown'
                 )
@@ -869,10 +869,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_balance = update_balance(user.id, amount, 'subtract')
             
             await update.message.reply_to_message.reply_text(
-                f"🎲 **ပွဲစဉ်** `{game['game_id']}`\n"
-                f"➖➖➖➖➖\n"
-                f"**နံပါတ် {bet_number}** - {amount} ကျပ်\n"
-                f"➖➖➖➖➖\n"
+                f"🎲 ပွဲစဉ် 🎲 {game['game_id']}\n"
+                f"➖➖➖➖➖➖\n"
+                f" နံပါတ် {bet_number}** - {amount} ကျပ်\n"
+                f"➖➖➖➖➖➖\n"
                 f"✅ လောင်းကြေးတင်ပြီးပါပြီ\n"
                 f"💰 လက်ကျန် {new_balance:,}Ks",
                 parse_mode='Markdown'
@@ -922,9 +922,9 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"✅ Game {game_id} closed")
             
             # Create result text for group
-            result_text = f"🎉 **ပွဲစဉ်** ➖ `{game_id}`\n\n"
-            result_text += f"💥 **Dice Bot** 💥\n"
-            result_text += f"**အံစာတုံးရလဒ်:** {dice_value}\n"
+            result_text = f"🎉 ပွဲစဉ်ရလဒ် ➖ {game_id}\n\n"
+            result_text += f"💥 Dice Bot 💥\n"
+            result_text += f"အံစာတုံးရလဒ်: {dice_value}\n"
             result_text += f"➖➖➖➖➖➖➖➖➖➖\n\n"
             
             if winners:
@@ -967,12 +967,12 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Send owner report via DM
             try:
-                owner_report = f"📊 **ပွဲစဉ်အစီရင်ခံစာ**\n\n"
-                owner_report += f"**ပွဲစဉ်:** `{game_id}`\n"
-                owner_report += f"**အံစာတုံးရလဒ်:** {dice_value}\n"
-                owner_report += f"**စုစုပေါင်းလောင်းငွေ:** {total_bet_amount:,} ကျပ်\n"
-                owner_report += f"**အနိုင်ငွေပေးချေခဲ့သည်:** {total_win_amount:,} ကျပ်\n"
-                owner_report += f"**လက်ကျန်ငွေ (အမြတ်):** {owner_profit:,} ကျပ်\n"
+                owner_report = f"📊 ပွဲစဉ်အစီရင်ခံစာ**\n\n"
+                owner_report += f"ပွဲစဉ်: `{game_id}`\n"
+                owner_report += f"အံစာတုံးရလဒ်: {dice_value}\n"
+                owner_report += f"စုစုပေါင်းလောင်းငွေ: {total_bet_amount:,} ကျပ်\n"
+                owner_report += f"အနိုင်ငွေပေးချေခဲ့သည်: {total_win_amount:,} ကျပ်\n"
+                owner_report += f"လက်ကျန်ငွေ (အမြတ်): {owner_profit:,} ကျပ်\n"
                 
                 await context.bot.send_message(
                     chat_id=OWNER_ID,
