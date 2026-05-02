@@ -6,6 +6,8 @@ import asyncio
 import os
 import re
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageFont
 import io
@@ -966,6 +968,22 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.bot_data['awaiting_dice'] = False
     print(f"✅ Game {game_id} completed")
 
+# ==================== HEALTH CHECK SERVER ====================
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, format, *args):
+        pass
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    print(f"🌐 Health check server running on port {port}")
+    server.serve_forever()
+
 # ==================== MAIN ====================
 def main():
     init_db()
@@ -976,6 +994,9 @@ def main():
     app.add_handler(MessageHandler(filters.Dice.ALL, handle_dice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_message))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
+
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
 
     print("=" * 50)
     print("🎲 DICE GAME BOT STARTED")
