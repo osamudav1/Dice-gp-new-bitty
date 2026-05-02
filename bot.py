@@ -507,7 +507,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=f"{label}\n\nဂိမ်းစတင်ရန် သို့ ဂိမ်းပိတ်ရန် ခလုတ်နှိပ်ပါ။",
                 reply_markup=reply_markup,
                 parse_mode='Markdown',
-                quote=True
+                do_quote=True
             )
         else:
             text = (
@@ -522,7 +522,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=text,
                 parse_mode='Markdown',
                 reply_markup=get_user_game_keyboard(),
-                quote=True
+                do_quote=True
             )
         return
 
@@ -820,7 +820,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🏆 စုစုပေါင်းနိုင်: {user_data['total_win']:,} ကျပ်"
                 f"{bet_text}",
                 parse_mode='Markdown',
-                quote=True
+                do_quote=True
             )
             await asyncio.sleep(10)
             try: await msg.delete()
@@ -829,14 +829,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if text == "❌ လောင်းကြေးပယ်ဖျက်":
             if not game:
-                msg = await update.message.reply_text("❌ ယခုဂိမ်းမရှိပါ", quote=True)
+                msg = await update.message.reply_text("❌ ယခုဂိမ်းမရှိပါ", do_quote=True)
                 await asyncio.sleep(5)
                 try: await msg.delete()
                 except: pass
                 return
             refund = cancel_bet_db(game['game_id'], user.id)
             if refund == 0:
-                msg = await update.message.reply_text("❌ လောင်းကြေးမရှိပါ", quote=True)
+                msg = await update.message.reply_text("❌ လောင်းကြေးမရှိပါ", do_quote=True)
                 await asyncio.sleep(5)
                 try: await msg.delete()
                 except: pass
@@ -847,7 +847,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💵 ပြန်ရငွေ: {refund:,} ကျပ်\n"
                 f"💰 လက်ကျန်: {new_balance:,} ကျပ်",
                 parse_mode='Markdown',
-                quote=True
+                do_quote=True
             )
             await asyncio.sleep(8)
             try: await msg.delete()
@@ -867,7 +867,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "〰️ တစ်ပွဲ နှစ်ကြိမ်အထိ (မတူသောနံပါတ်) လောင်းနိုင်သည်\n\n"
                 "⏱ ဤစာ 10 စက္ကန့်အတွင်း ပျောက်သွားမည်",
                 parse_mode='Markdown',
-                quote=True
+                do_quote=True
             )
             await asyncio.sleep(10)
             try: await msg.delete()
@@ -956,7 +956,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if amount < MIN_BET or amount > MAX_BET:
             msg = await update.message.reply_text(
                 f"❌ Min {MIN_BET:,}ကျပ် — Max {MAX_BET:,}ကျပ်",
-                quote=True
+                do_quote=True
             )
             await asyncio.sleep(5)
             try: await msg.delete()
@@ -967,7 +967,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if bet_count >= 2:
             msg = await update.message.reply_text(
                 "❌ ဤပွဲစဉ်တွင် နှစ်ကြိမ်သာ လောင်းနိုင်သည်",
-                quote=True
+                do_quote=True
             )
             await asyncio.sleep(5)
             try: await msg.delete()
@@ -980,7 +980,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if eb[3] == bet_number:
                 msg = await update.message.reply_text(
                     f"❌ နံပါတ် {bet_number} ကို လောင်းပြီးပါပြီ — မတူသောနံပါတ်ကိုသာ ရွေးပါ",
-                    quote=True
+                    do_quote=True
                 )
                 await asyncio.sleep(5)
                 try: await msg.delete()
@@ -989,7 +989,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         user_data = get_user(user.id)
         if not user_data or user_data['balance'] < amount:
-            msg = await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ", quote=True)
+            msg = await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ", do_quote=True)
             await asyncio.sleep(5)
             try: await msg.delete()
             except: pass
@@ -1007,7 +1007,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ လောင်းကြေးတင်ပြီးပါပြီ\n"
             f"💰 လက်ကျန်: {new_balance:,} ကျပ်",
             parse_mode='Markdown',
-            quote=True
+            do_quote=True
         )
 
 # ==================== DICE HANDLER ====================
