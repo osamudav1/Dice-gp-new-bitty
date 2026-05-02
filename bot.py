@@ -27,71 +27,130 @@ MIN_BET = 50
 MAX_BET = 1000
 
 # ==================== DATABASE SETUP ====================
+DATABASE_URL = os.environ.get("DATABASE_URL")
+USE_PG = bool(DATABASE_URL)
+
+def get_conn():
+    if USE_PG:
+        import psycopg2
+        return psycopg2.connect(DATABASE_URL)
+    return sqlite3.connect('bot_database.db')
+
+def Q(n=1):
+    ph = '%s' if USE_PG else '?'
+    return ', '.join([ph] * n)
+
+def q():
+    return '%s' if USE_PG else '?'
+
 def init_db():
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (user_id TEXT PRIMARY KEY,
-                  name TEXT,
-                  mention TEXT,
-                  total_bet INTEGER DEFAULT 0,
-                  total_win INTEGER DEFAULT 0,
-                  balance INTEGER DEFAULT 0)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS games
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  game_id INTEGER UNIQUE,
-                  status TEXT,
-                  result_number INTEGER,
-                  total_bet_amount INTEGER DEFAULT 0,
-                  total_win_amount INTEGER DEFAULT 0,
-                  owner_profit INTEGER DEFAULT 0,
-                  created_at TIMESTAMP,
-                  closed_at TIMESTAMP)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS bets
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  game_id INTEGER,
-                  user_id TEXT,
-                  bet_number INTEGER,
-                  amount INTEGER,
-                  status TEXT,
-                  win_amount INTEGER DEFAULT 0,
-                  timestamp TIMESTAMP)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS game_images
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  image_type TEXT,
-                  photo_id TEXT,
-                  updated_by TEXT,
-                  updated_at TIMESTAMP)''')
+    if USE_PG:
+        c.execute('''CREATE TABLE IF NOT EXISTS users
+                     (user_id TEXT PRIMARY KEY,
+                      name TEXT,
+                      mention TEXT,
+                      total_bet BIGINT DEFAULT 0,
+                      total_win BIGINT DEFAULT 0,
+                      balance BIGINT DEFAULT 0)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS games
+                     (id BIGSERIAL PRIMARY KEY,
+                      game_id BIGINT UNIQUE,
+                      status TEXT,
+                      result_number INTEGER,
+                      total_bet_amount BIGINT DEFAULT 0,
+                      total_win_amount BIGINT DEFAULT 0,
+                      owner_profit BIGINT DEFAULT 0,
+                      created_at TIMESTAMP,
+                      closed_at TIMESTAMP)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS bets
+                     (id BIGSERIAL PRIMARY KEY,
+                      game_id BIGINT,
+                      user_id TEXT,
+                      bet_number INTEGER,
+                      amount BIGINT,
+                      status TEXT,
+                      win_amount BIGINT DEFAULT 0,
+                      timestamp TIMESTAMP)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS game_images
+                     (id BIGSERIAL PRIMARY KEY,
+                      image_type TEXT UNIQUE,
+                      photo_id TEXT,
+                      updated_by TEXT,
+                      updated_at TIMESTAMP)''')
+    else:
+        c.execute('''CREATE TABLE IF NOT EXISTS users
+                     (user_id TEXT PRIMARY KEY,
+                      name TEXT,
+                      mention TEXT,
+                      total_bet INTEGER DEFAULT 0,
+                      total_win INTEGER DEFAULT 0,
+                      balance INTEGER DEFAULT 0)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS games
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      game_id INTEGER UNIQUE,
+                      status TEXT,
+                      result_number INTEGER,
+                      total_bet_amount INTEGER DEFAULT 0,
+                      total_win_amount INTEGER DEFAULT 0,
+                      owner_profit INTEGER DEFAULT 0,
+                      created_at TIMESTAMP,
+                      closed_at TIMESTAMP)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS bets
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      game_id INTEGER,
+                      user_id TEXT,
+                      bet_number INTEGER,
+                      amount INTEGER,
+                      status TEXT,
+                      win_amount INTEGER DEFAULT 0,
+                      timestamp TIMESTAMP)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS game_images
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      image_type TEXT UNIQUE,
+                      photo_id TEXT,
+                      updated_by TEXT,
+                      updated_at TIMESTAMP)''')
     conn.commit()
     conn.close()
 
 # ==================== IMAGE FUNCTIONS ====================
 def save_game_image(image_type, photo_id, updated_by):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO game_images (image_type, photo_id, updated_by, updated_at) VALUES (?, ?, ?, ?)",
-              (image_type, photo_id, str(updated_by), datetime.now()))
+    if USE_PG:
+        c.execute(
+            f"INSERT INTO game_images (image_type, photo_id, updated_by, updated_at) VALUES ({Q(4)}) "
+            f"ON CONFLICT (image_type) DO UPDATE SET photo_id = EXCLUDED.photo_id, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at",
+            (image_type, photo_id, str(updated_by), datetime.now())
+        )
+    else:
+        c.execute(
+            f"INSERT OR REPLACE INTO game_images (image_type, photo_id, updated_by, updated_at) VALUES ({Q(4)})",
+            (image_type, photo_id, str(updated_by), datetime.now())
+        )
     conn.commit()
     conn.close()
 
 def get_game_image(image_type):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("SELECT photo_id FROM game_images WHERE image_type = ? ORDER BY updated_at DESC LIMIT 1", (image_type,))
+    c.execute(f"SELECT photo_id FROM game_images WHERE image_type = {q()} ORDER BY updated_at DESC LIMIT 1", (image_type,))
     result = c.fetchone()
     conn.close()
     return result[0] if result else None
 
 def delete_game_image(image_type):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("DELETE FROM game_images WHERE image_type = ?", (image_type,))
+    c.execute(f"DELETE FROM game_images WHERE image_type = {q()}", (image_type,))
     conn.commit()
     conn.close()
 
 # ==================== DATABASE FUNCTIONS ====================
 def get_next_game_id():
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
     c.execute("SELECT game_id FROM games ORDER BY game_id DESC LIMIT 1")
     result = c.fetchone()
@@ -99,9 +158,9 @@ def get_next_game_id():
     return result[0] + 1 if result else 100000
 
 def get_user(user_id):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE user_id = ?", (str(user_id),))
+    c.execute(f"SELECT * FROM users WHERE user_id = {q()}", (str(user_id),))
     user = c.fetchone()
     conn.close()
     if user:
@@ -116,36 +175,45 @@ def get_user(user_id):
     return None
 
 def create_or_update_user(user_id, name, mention):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO users (user_id, name, mention, balance) VALUES (?, ?, ?, COALESCE((SELECT balance FROM users WHERE user_id = ?), 0))",
-              (str(user_id), name, mention, str(user_id)))
+    if USE_PG:
+        c.execute(
+            f"INSERT INTO users (user_id, name, mention, balance) VALUES ({Q(4)}) "
+            f"ON CONFLICT (user_id) DO UPDATE SET name = EXCLUDED.name, mention = EXCLUDED.mention",
+            (str(user_id), name, mention, 0)
+        )
+    else:
+        c.execute(
+            f"INSERT OR REPLACE INTO users (user_id, name, mention, balance) VALUES ({q()}, {q()}, {q()}, COALESCE((SELECT balance FROM users WHERE user_id = {q()}), 0))",
+            (str(user_id), name, mention, str(user_id))
+        )
     conn.commit()
     conn.close()
 
 def update_balance(user_id, amount, operation='add'):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
     if operation == 'add':
-        c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, str(user_id)))
+        c.execute(f"UPDATE users SET balance = balance + {q()} WHERE user_id = {q()}", (amount, str(user_id)))
     else:
-        c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (amount, str(user_id)))
+        c.execute(f"UPDATE users SET balance = balance - {q()} WHERE user_id = {q()}", (amount, str(user_id)))
     conn.commit()
-    c.execute("SELECT balance FROM users WHERE user_id = ?", (str(user_id),))
+    c.execute(f"SELECT balance FROM users WHERE user_id = {q()}", (str(user_id),))
     new_balance = c.fetchone()[0]
     conn.close()
     return new_balance
 
 def update_user_stats(user_id, bet_amount, win_amount=0):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("UPDATE users SET total_bet = total_bet + ?, total_win = total_win + ? WHERE user_id = ?",
+    c.execute(f"UPDATE users SET total_bet = total_bet + {q()}, total_win = total_win + {q()} WHERE user_id = {q()}",
               (bet_amount, win_amount, str(user_id)))
     conn.commit()
     conn.close()
 
 def get_current_game():
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
     c.execute("SELECT * FROM games WHERE status = 'open' ORDER BY game_id DESC LIMIT 1")
     game = c.fetchone()
@@ -166,55 +234,55 @@ def get_current_game():
 
 def create_game():
     game_id = get_next_game_id()
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("INSERT INTO games (game_id, status, total_bet_amount, total_win_amount, owner_profit, created_at) VALUES (?, 'open', 0, 0, 0, ?)",
+    c.execute(f"INSERT INTO games (game_id, status, total_bet_amount, total_win_amount, owner_profit, created_at) VALUES ({q()}, 'open', 0, 0, 0, {q()})",
               (game_id, datetime.now()))
     conn.commit()
     conn.close()
     return game_id
 
 def close_game(game_id, result_number, total_win_amount, owner_profit):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("UPDATE games SET status = 'closed', result_number = ?, total_win_amount = ?, owner_profit = ?, closed_at = ? WHERE game_id = ?",
+    c.execute(f"UPDATE games SET status = 'closed', result_number = {q()}, total_win_amount = {q()}, owner_profit = {q()}, closed_at = {q()} WHERE game_id = {q()}",
               (result_number, total_win_amount, owner_profit, datetime.now(), game_id))
     conn.commit()
     conn.close()
 
 def save_bet(game_id, user_id, bet_number, amount):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("INSERT INTO bets (game_id, user_id, bet_number, amount, status, timestamp) VALUES (?, ?, ?, ?, 'pending', ?)",
+    c.execute(f"INSERT INTO bets (game_id, user_id, bet_number, amount, status, timestamp) VALUES ({q()}, {q()}, {q()}, {q()}, 'pending', {q()})",
               (game_id, str(user_id), bet_number, amount, datetime.now()))
-    c.execute("UPDATE games SET total_bet_amount = total_bet_amount + ? WHERE game_id = ?",
+    c.execute(f"UPDATE games SET total_bet_amount = total_bet_amount + {q()} WHERE game_id = {q()}",
               (amount, game_id))
     conn.commit()
     conn.close()
     update_user_stats(user_id, amount, 0)
 
 def cancel_bet_db(game_id, user_id):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("SELECT SUM(amount) FROM bets WHERE game_id = ? AND user_id = ? AND status = 'pending'",
+    c.execute(f"SELECT SUM(amount) FROM bets WHERE game_id = {q()} AND user_id = {q()} AND status = 'pending'",
               (game_id, str(user_id)))
     row = c.fetchone()
     total = row[0] if row[0] else 0
     if total == 0:
         conn.close()
         return 0
-    c.execute("DELETE FROM bets WHERE game_id = ? AND user_id = ? AND status = 'pending'",
+    c.execute(f"DELETE FROM bets WHERE game_id = {q()} AND user_id = {q()} AND status = 'pending'",
               (game_id, str(user_id)))
-    c.execute("UPDATE games SET total_bet_amount = total_bet_amount - ? WHERE game_id = ?",
+    c.execute(f"UPDATE games SET total_bet_amount = total_bet_amount - {q()} WHERE game_id = {q()}",
               (total, game_id))
     conn.commit()
     conn.close()
     return total
 
 def get_game_bets(game_id):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("SELECT * FROM bets WHERE game_id = ?", (game_id,))
+    c.execute(f"SELECT * FROM bets WHERE game_id = {q()}", (game_id,))
     bets = c.fetchall()
     conn.close()
     result = []
@@ -233,48 +301,48 @@ def get_game_bets(game_id):
     return result
 
 def update_bet_results(game_id, result_number):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("SELECT * FROM bets WHERE game_id = ?", (game_id,))
+    c.execute(f"SELECT * FROM bets WHERE game_id = {q()}", (game_id,))
     bets = c.fetchall()
     winners = []
     total_win_amount = 0
     for bet in bets:
         if bet[3] == result_number:
             win_amount = bet[4] * result_number
-            c.execute("UPDATE bets SET status = 'won', win_amount = ? WHERE id = ?", (win_amount, bet[0]))
+            c.execute(f"UPDATE bets SET status = 'won', win_amount = {q()} WHERE id = {q()}", (win_amount, bet[0]))
             winners.append(bet)
             total_win_amount += win_amount
             user_id = bet[2]
-            c.execute("UPDATE users SET total_win = total_win + ? WHERE user_id = ?", (win_amount, str(user_id)))
+            c.execute(f"UPDATE users SET total_win = total_win + {q()} WHERE user_id = {q()}", (win_amount, str(user_id)))
         else:
-            c.execute("UPDATE bets SET status = 'lost', win_amount = 0 WHERE id = ?", (bet[0],))
+            c.execute(f"UPDATE bets SET status = 'lost', win_amount = 0 WHERE id = {q()}", (bet[0],))
     conn.commit()
     conn.close()
     return winners, total_win_amount
 
 def get_user_bets(user_id, game_id=None):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
     if game_id:
-        c.execute("SELECT * FROM bets WHERE user_id = ? AND game_id = ?", (str(user_id), game_id))
+        c.execute(f"SELECT * FROM bets WHERE user_id = {q()} AND game_id = {q()}", (str(user_id), game_id))
     else:
-        c.execute("SELECT * FROM bets WHERE user_id = ? ORDER BY timestamp DESC LIMIT 10", (str(user_id),))
+        c.execute(f"SELECT * FROM bets WHERE user_id = {q()} ORDER BY timestamp DESC LIMIT 10", (str(user_id),))
     bets = c.fetchall()
     conn.close()
     return bets
 
 def get_user_bet_count_for_game(user_id, game_id):
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM bets WHERE user_id = ? AND game_id = ?", (str(user_id), game_id))
+    c.execute(f"SELECT COUNT(*) FROM bets WHERE user_id = {q()} AND game_id = {q()}", (str(user_id), game_id))
     count = c.fetchone()[0]
     conn.close()
     return count
 
 # ==================== BACKUP FUNCTIONS ====================
 def create_backup():
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
     backup_data = {
         'users': [],
@@ -313,19 +381,19 @@ def create_backup():
 def restore_backup(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         backup_data = json.load(f)
-    conn = sqlite3.connect('bot_database.db')
+    conn = get_conn()
     c = conn.cursor()
     c.execute("DELETE FROM bets")
     c.execute("DELETE FROM games")
     c.execute("DELETE FROM users")
     for user in backup_data['users']:
-        c.execute("INSERT INTO users (user_id, name, mention, total_bet, total_win, balance) VALUES (?, ?, ?, ?, ?, ?)",
+        c.execute(f"INSERT INTO users (user_id, name, mention, total_bet, total_win, balance) VALUES ({Q(6)})",
                   (user['user_id'], user['name'], user['mention'], user['total_bet'], user['total_win'], user['balance']))
     for game in backup_data['games']:
-        c.execute("INSERT INTO games (id, game_id, status, result_number, total_bet_amount, total_win_amount, owner_profit, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        c.execute(f"INSERT INTO games (id, game_id, status, result_number, total_bet_amount, total_win_amount, owner_profit, created_at, closed_at) VALUES ({Q(9)})",
                   (game['id'], game['game_id'], game['status'], game['result_number'], game['total_bet_amount'], game['total_win_amount'], game['owner_profit'], game['created_at'], game['closed_at']))
     for bet in backup_data['bets']:
-        c.execute("INSERT INTO bets (id, game_id, user_id, bet_number, amount, status, win_amount, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        c.execute(f"INSERT INTO bets (id, game_id, user_id, bet_number, amount, status, win_amount, timestamp) VALUES ({Q(8)})",
                   (bet['id'], bet['game_id'], bet['user_id'], bet['bet_number'], bet['amount'], bet['status'], bet['win_amount'], bet['timestamp']))
     conn.commit()
     conn.close()
