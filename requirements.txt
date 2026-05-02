@@ -1,3 +1,7 @@
 python-telegram-bot==20.7
 Pillow
 python-dotenv
+Pillow
+python-dotenv
+python-telegram-bot==20.7
+telegram
