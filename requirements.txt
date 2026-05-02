@@ -1,4 +1,4 @@
-python-telegram-bot==20.7
+python-telegram-bot==22.7
 Pillow
 python-dotenv
 psycopg2-binary

@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
+from telegram.constants import KeyboardButtonStyle
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes
@@ -498,8 +499,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_staff(user.id):
             label = "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*" if user.id == OWNER_ID else "🛡 *Admin ထိန်းချုပ်ခန်း*"
             keyboard = [
-                [InlineKeyboardButton("🟢 ဂိမ်းစတင်ရန်", callback_data='game_start')],
-                [InlineKeyboardButton("🔴 ဂိမ်းပိတ်ရန်", callback_data='game_stop')]
+                [InlineKeyboardButton("🟢 ဂိမ်းစတင်ရန်", callback_data='game_start', style=KeyboardButtonStyle.SUCCESS)],
+                [InlineKeyboardButton("🔴 ဂိမ်းပိတ်ရန်", callback_data='game_stop', style=KeyboardButtonStyle.DANGER)]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
@@ -528,12 +529,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # PRIVATE CHAT - Owner full panel
     if chat.type == 'private' and user.id == OWNER_ID:
         keyboard = [
-            [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image')],
-            [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image')],
-            [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image')],
-            [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images')],
-            [InlineKeyboardButton("💾 Backup", callback_data='backup_data'),
-             InlineKeyboardButton("🔄 Restore", callback_data='restore_data')]
+            [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image', style=KeyboardButtonStyle.PRIMARY)],
+            [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image', style=KeyboardButtonStyle.PRIMARY)],
+            [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image', style=KeyboardButtonStyle.PRIMARY)],
+            [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images', style=KeyboardButtonStyle.DANGER)],
+            [InlineKeyboardButton("💾 Backup", callback_data='backup_data', style=KeyboardButtonStyle.PRIMARY),
+             InlineKeyboardButton("🔄 Restore", callback_data='restore_data', style=KeyboardButtonStyle.PRIMARY)]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
@@ -597,10 +598,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'delete_images':
         await query.answer()
         keyboard = [
-            [InlineKeyboardButton("🟢 Game Start ပုံဖျက်", callback_data='del_start')],
-            [InlineKeyboardButton("🔴 Game Stop ပုံဖျက်", callback_data='del_stop')],
-            [InlineKeyboardButton("🟡 Result ပုံဖျက်", callback_data='del_result')],
-            [InlineKeyboardButton("◀️ နောက်သို့", callback_data='back_to_main')]
+            [InlineKeyboardButton("🟢 Game Start ပုံဖျက်", callback_data='del_start', style=KeyboardButtonStyle.DANGER)],
+            [InlineKeyboardButton("🔴 Game Stop ပုံဖျက်", callback_data='del_stop', style=KeyboardButtonStyle.DANGER)],
+            [InlineKeyboardButton("🟡 Result ပုံဖျက်", callback_data='del_result', style=KeyboardButtonStyle.DANGER)],
+            [InlineKeyboardButton("◀️ နောက်သို့", callback_data='back_to_main', style=KeyboardButtonStyle.PRIMARY)]
         ]
         await query.edit_message_text(
             "🗑 *ဖျက်လိုသောပုံကိုရွေးပါ*",
@@ -626,12 +627,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'back_to_main':
         await query.answer()
         keyboard = [
-            [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image')],
-            [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image')],
-            [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image')],
-            [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images')],
-            [InlineKeyboardButton("💾 Backup", callback_data='backup_data'),
-             InlineKeyboardButton("🔄 Restore", callback_data='restore_data')]
+            [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image', style=KeyboardButtonStyle.PRIMARY)],
+            [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image', style=KeyboardButtonStyle.PRIMARY)],
+            [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image', style=KeyboardButtonStyle.PRIMARY)],
+            [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images', style=KeyboardButtonStyle.DANGER)],
+            [InlineKeyboardButton("💾 Backup", callback_data='backup_data', style=KeyboardButtonStyle.PRIMARY),
+             InlineKeyboardButton("🔄 Restore", callback_data='restore_data', style=KeyboardButtonStyle.PRIMARY)]
         ]
         await query.edit_message_text(
             "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*",
