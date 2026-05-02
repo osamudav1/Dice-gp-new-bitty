@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageFont
 import io
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes
@@ -194,20 +194,20 @@ def save_bet(game_id, user_id, bet_number, amount):
 def cancel_bet_db(game_id, user_id):
     conn = sqlite3.connect('bot_database.db')
     c = conn.cursor()
-    c.execute("SELECT amount FROM bets WHERE game_id = ? AND user_id = ? AND status = 'pending'",
+    c.execute("SELECT SUM(amount) FROM bets WHERE game_id = ? AND user_id = ? AND status = 'pending'",
               (game_id, str(user_id)))
-    bet = c.fetchone()
-    if not bet:
+    row = c.fetchone()
+    total = row[0] if row[0] else 0
+    if total == 0:
         conn.close()
         return 0
-    amount = bet[0]
     c.execute("DELETE FROM bets WHERE game_id = ? AND user_id = ? AND status = 'pending'",
               (game_id, str(user_id)))
     c.execute("UPDATE games SET total_bet_amount = total_bet_amount - ? WHERE game_id = ?",
-              (amount, game_id))
+              (total, game_id))
     conn.commit()
     conn.close()
-    return amount
+    return total
 
 def get_game_bets(game_id):
     conn = sqlite3.connect('bot_database.db')
@@ -355,12 +355,12 @@ def get_warning_text():
 def get_user_game_keyboard():
     keyboard = [
         [
-            InlineKeyboardButton("👤 Profile", callback_data='user_profile'),
-            InlineKeyboardButton("❌ လောင်းကြေးပယ်ဖျက်", callback_data='cancel_bet'),
-            InlineKeyboardButton("❓ Help", callback_data='user_help'),
+            KeyboardButton("👤 Profile"),
+            KeyboardButton("❌ လောင်းကြေးပယ်ဖျက်"),
+            KeyboardButton("❓ Help"),
         ]
     ]
-    return InlineKeyboardMarkup(keyboard)
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
 # ==================== COMMAND HANDLERS ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -427,85 +427,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     print(f"CALLBACK: {data} from {user.id}")
-
-    # ===== USER CALLBACKS (anyone in group) =====
-    if data == 'user_profile':
-        await query.answer()
-        user_data = get_user(user.id)
-        if not user_data:
-            await query.answer("❌ /start လုပ်ပါ", show_alert=True)
-            return
-        game = get_current_game()
-        bet_text = ""
-        if game:
-            user_bets = get_user_bets(user.id, game['game_id'])
-            if user_bets:
-                bet_text = f"\n\n🎯 ယခုလောင်း: နံပါတ် {user_bets[0][3]} — {user_bets[0][4]:,} ကျပ်"
-        msg = await query.message.reply_text(
-            f"👤 *{user_data['name']}*\n"
-            f"🆔 `{user_data['user_id']}`\n"
-            f"💰 လက်ကျန်: {user_data['balance']:,} ကျပ်\n"
-            f"📊 စုစုပေါင်းလောင်း: {user_data['total_bet']:,} ကျပ်\n"
-            f"🏆 စုစုပေါင်းနိုင်: {user_data['total_win']:,} ကျပ်"
-            f"{bet_text}",
-            parse_mode='Markdown'
-        )
-        await asyncio.sleep(10)
-        try:
-            await msg.delete()
-        except:
-            pass
-        return
-
-    if data == 'cancel_bet':
-        await query.answer()
-        game = get_current_game()
-        if not game:
-            msg = await query.message.reply_text("❌ ယခုဂိမ်းမရှိပါ")
-            await asyncio.sleep(5)
-            try: await msg.delete()
-            except: pass
-            return
-        refund = cancel_bet_db(game['game_id'], user.id)
-        if refund == 0:
-            msg = await query.message.reply_text("❌ လောင်းကြေးမရှိပါ သို့ ရပ်ဆိုင်းပြီးပါပြီ")
-            await asyncio.sleep(5)
-            try: await msg.delete()
-            except: pass
-            return
-        new_balance = update_balance(user.id, refund, 'add')
-        msg = await query.message.reply_text(
-            f"✅ လောင်းကြေးပယ်ဖျက်ပြီး\n"
-            f"💵 ပြန်ရငွေ: {refund:,} ကျပ်\n"
-            f"💰 လက်ကျန်: {new_balance:,} ကျပ်",
-            parse_mode='Markdown'
-        )
-        await asyncio.sleep(8)
-        try: await msg.delete()
-        except: pass
-        return
-
-    if data == 'user_help':
-        await query.answer()
-        msg = await query.message.reply_text(
-            "📖 *ကစားနည်း*\n\n"
-            "Group ထဲတွင် တိုက်ရိုက်ရိုက်ပို့ပါ\n"
-            "`နံပါတ် ငွေပမာဏ`\n\n"
-            "ဥပမာ:\n"
-            "`1 500` — နံပါတ် 1 ကို 500 ကျပ်\n"
-            "`3 200` — နံပါတ် 3 ကို 200 ကျပ်\n"
-            "`6 50`  — နံပါတ် 6 ကို 50 ကျပ်\n\n"
-            f"〰️ Min: {MIN_BET:,} ကျပ် │ Max: {MAX_BET:,} ကျပ်\n"
-            "〰️ တစ်ပွဲ တစ်ကြိမ်သာ လောင်းနိုင်သည်\n\n"
-            "⏱ ဤစာ 10 စက္ကန့်အတွင်း ပျောက်သွားမည်",
-            parse_mode='Markdown'
-        )
-        await asyncio.sleep(10)
-        try:
-            await msg.delete()
-        except:
-            pass
-        return
 
     # ===== OWNER-ONLY CALLBACKS =====
     if user.id != OWNER_ID:
@@ -624,7 +545,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption = (
                 f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
                 f"နံပါတ် ၁ မှ ၆ ထိ လောင်းနိုင်ပါသည်\n"
-                f"တစ်ယောက် တစ်ကြိမ်သာ လောင်းနိုင်သည်\n"
+                f"တစ်ယောက် နှစ်ကြိမ်အထိ လောင်းနိုင်သည် (မတူသောနံပါတ်)\n"
                 f"Min {MIN_BET:,}ကျပ် │ Max {MAX_BET:,}ကျပ်"
             )
 
@@ -694,7 +615,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=GAME_GROUP_ID,
                 text="🎲 Owner — ကျေးဇူးပြု၍ အံစာတုံး ၁ တုံး ပို့ပေးပါ ⏳",
-                parse_mode='Markdown'
+                parse_mode='Markdown',
+                reply_markup=ReplyKeyboardRemove()
             )
 
             context.bot_data['current_game_id'] = game_id
@@ -742,6 +664,82 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== GAME GROUP =====
     if chat.id == GAME_GROUP_ID:
         game = get_current_game()
+
+        # ===== KEYBOARD BUTTON ACTIONS =====
+        if text == "👤 Profile":
+            mention = f"@{user.username}" if user.username else user.full_name
+            create_or_update_user(user.id, user.full_name, mention)
+            user_data = get_user(user.id)
+            if not user_data:
+                return
+            bet_text = ""
+            if game:
+                user_bets = get_user_bets(user.id, game['game_id'])
+                if user_bets:
+                    bet_text = "\n\n🎯 ယခုလောင်းထားသောငွေ:\n"
+                    for b in user_bets:
+                        bet_text += f"  နံပါတ် {b[3]} — {b[4]:,} ကျပ်\n"
+            msg = await update.message.reply_text(
+                f"👤 *{user_data['name']}*\n"
+                f"🆔 `{user_data['user_id']}`\n"
+                f"💰 လက်ကျန်: {user_data['balance']:,} ကျပ်\n"
+                f"📊 စုစုပေါင်းလောင်း: {user_data['total_bet']:,} ကျပ်\n"
+                f"🏆 စုစုပေါင်းနိုင်: {user_data['total_win']:,} ကျပ်"
+                f"{bet_text}",
+                parse_mode='Markdown',
+                quote=True
+            )
+            await asyncio.sleep(10)
+            try: await msg.delete()
+            except: pass
+            return
+
+        if text == "❌ လောင်းကြေးပယ်ဖျက်":
+            if not game:
+                msg = await update.message.reply_text("❌ ယခုဂိမ်းမရှိပါ", quote=True)
+                await asyncio.sleep(5)
+                try: await msg.delete()
+                except: pass
+                return
+            refund = cancel_bet_db(game['game_id'], user.id)
+            if refund == 0:
+                msg = await update.message.reply_text("❌ လောင်းကြေးမရှိပါ", quote=True)
+                await asyncio.sleep(5)
+                try: await msg.delete()
+                except: pass
+                return
+            new_balance = update_balance(user.id, refund, 'add')
+            msg = await update.message.reply_text(
+                f"✅ လောင်းကြေးအားလုံး ပယ်ဖျက်ပြီး\n"
+                f"💵 ပြန်ရငွေ: {refund:,} ကျပ်\n"
+                f"💰 လက်ကျန်: {new_balance:,} ကျပ်",
+                parse_mode='Markdown',
+                quote=True
+            )
+            await asyncio.sleep(8)
+            try: await msg.delete()
+            except: pass
+            return
+
+        if text == "❓ Help":
+            msg = await update.message.reply_text(
+                "📖 *ကစားနည်း*\n\n"
+                "Group ထဲတွင် တိုက်ရိုက်ရိုက်ပို့ပါ\n"
+                "`နံပါတ် ငွေပမာဏ`\n\n"
+                "ဥပမာ:\n"
+                "`1 500` — နံပါတ် 1 ကို 500 ကျပ်\n"
+                "`3 200` — နံပါတ် 3 ကို 200 ကျပ်\n"
+                "`6 50`  — နံပါတ် 6 ကို 50 ကျပ်\n\n"
+                f"〰️ Min: {MIN_BET:,} ကျပ် │ Max: {MAX_BET:,} ကျပ်\n"
+                "〰️ တစ်ပွဲ နှစ်ကြိမ်အထိ (မတူသောနံပါတ်) လောင်းနိုင်သည်\n\n"
+                "⏱ ဤစာ 10 စက္ကန့်အတွင်း ပျောက်သွားမည်",
+                parse_mode='Markdown',
+                quote=True
+            )
+            await asyncio.sleep(10)
+            try: await msg.delete()
+            except: pass
+            return
 
         # Owner deposit/withdraw (must reply to a message)
         if user.id == OWNER_ID and update.message.reply_to_message:
@@ -841,15 +839,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         bet_count = get_user_bet_count_for_game(user.id, game['game_id'])
-        if bet_count >= 1:
+        if bet_count >= 2:
             msg = await update.message.reply_text(
-                "❌ ဤပွဲစဉ်တွင် တစ်ကြိမ်သာ လောင်းနိုင်သည်",
+                "❌ ဤပွဲစဉ်တွင် နှစ်ကြိမ်သာ လောင်းနိုင်သည်",
                 quote=True
             )
             await asyncio.sleep(5)
             try: await msg.delete()
             except: pass
             return
+
+        # Check if user already bet on same number
+        existing_bets = get_user_bets(user.id, game['game_id'])
+        for eb in existing_bets:
+            if eb[3] == bet_number:
+                msg = await update.message.reply_text(
+                    f"❌ နံပါတ် {bet_number} ကို လောင်းပြီးပါပြီ — မတူသောနံပါတ်ကိုသာ ရွေးပါ",
+                    quote=True
+                )
+                await asyncio.sleep(5)
+                try: await msg.delete()
+                except: pass
+                return
 
         user_data = get_user(user.id)
         if not user_data or user_data['balance'] < amount:
@@ -944,6 +955,13 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=GAME_GROUP_ID,
         text=get_warning_text(),
         reply_markup=get_owner_button()
+    )
+
+    # Remove the keyboard now that the game is over
+    await context.bot.send_message(
+        chat_id=GAME_GROUP_ID,
+        text="🔚 ပွဲစဉ်ပြီးပါပြီ",
+        reply_markup=ReplyKeyboardRemove()
     )
 
     try:
