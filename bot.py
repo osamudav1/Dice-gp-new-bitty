@@ -349,8 +349,6 @@ def get_owner_button():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_warning_text():
-    return "အောက်က Gift Way Channel\nလေးတွေကိုjoinပေးခဲ့ကြပါဦး။"
 
 def get_user_game_keyboard():
     keyboard = [
@@ -556,20 +554,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     photo=custom_image,
                     caption=caption,
                     parse_mode='Markdown',
-                    reply_markup=get_user_game_keyboard()
+                    reply_markup=get_owner_button()
                 )
             else:
                 await context.bot.send_message(
                     chat_id=GAME_GROUP_ID,
                     text=caption,
                     parse_mode='Markdown',
-                    reply_markup=get_user_game_keyboard()
+                    reply_markup=get_owner_button()
                 )
 
             await context.bot.send_message(
                 chat_id=GAME_GROUP_ID,
-                text=get_warning_text(),
-                reply_markup=get_owner_button()
+                text="〰️",
+                reply_markup=get_user_game_keyboard()
             )
 
         elif data == 'game_stop':
@@ -597,20 +595,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=GAME_GROUP_ID,
                     photo=custom_image,
                     caption=bet_text,
-                    parse_mode='Markdown'
+                    parse_mode='Markdown',
+                    reply_markup=get_owner_button()
                 )
             else:
                 await context.bot.send_message(
                     chat_id=GAME_GROUP_ID,
                     text=bet_text,
-                    parse_mode='Markdown'
+                    parse_mode='Markdown',
+                    reply_markup=get_owner_button()
                 )
-
-            await context.bot.send_message(
-                chat_id=GAME_GROUP_ID,
-                text=get_warning_text(),
-                reply_markup=get_owner_button()
-            )
 
             await context.bot.send_message(
                 chat_id=GAME_GROUP_ID,
@@ -778,10 +772,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(
                         f"✅ {user_data['mention']} ထံ {amount:,} ကျပ် ထည့်ပြီးပါပြီ"
                     )
-                    await context.bot.send_message(
-                        chat_id=GAME_GROUP_ID,
-                        text=f"👤 {user_data['mention']} အကောင့်ထဲသို့\n{amount:,} ကျပ် ထည့်သွင်းပေးပြီ 🎲"
-                    )
                 except ValueError:
                     await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းထည့်ပါ")
 
@@ -808,10 +798,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         pass
                     await update.message.reply_text(
                         f"✅ {user_data['name']} ထံမှ {amount:,} ကျပ် ထုတ်ပြီးပါပြီ"
-                    )
-                    await context.bot.send_message(
-                        chat_id=GAME_GROUP_ID,
-                        text=f"🧊 {user_data['name']} ထုတ်ငွေ {amount:,} ကျပ် လွဲပေးပြီးပါပြီ"
                     )
                 except ValueError:
                     await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းထည့်ပါ")
@@ -910,6 +896,9 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not game:
         return
 
+    # Wait for dice animation to fully stop before processing
+    await asyncio.sleep(4)
+
     winners, total_win_amount = update_bet_results(game_id, dice_value)
     total_bet_amount = game['total_bet_amount']
     owner_profit = total_bet_amount - total_win_amount
@@ -942,20 +931,16 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=GAME_GROUP_ID,
             photo=custom_image,
             caption=result_text,
-            parse_mode='Markdown'
+            parse_mode='Markdown',
+            reply_markup=get_owner_button()
         )
     else:
         await context.bot.send_message(
             chat_id=GAME_GROUP_ID,
             text=result_text,
-            parse_mode='Markdown'
+            parse_mode='Markdown',
+            reply_markup=get_owner_button()
         )
-
-    await context.bot.send_message(
-        chat_id=GAME_GROUP_ID,
-        text=get_warning_text(),
-        reply_markup=get_owner_button()
-    )
 
     # Remove the keyboard now that the game is over
     await context.bot.send_message(
