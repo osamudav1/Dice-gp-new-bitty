@@ -47,6 +47,10 @@ def init_db():
     conn = get_conn()
     c = conn.cursor()
     if USE_PG:
+        c.execute('''CREATE TABLE IF NOT EXISTS admins
+                     (user_id BIGINT PRIMARY KEY,
+                      name TEXT,
+                      added_at TIMESTAMP)''')
         c.execute('''CREATE TABLE IF NOT EXISTS users
                      (user_id TEXT PRIMARY KEY,
                       name TEXT,
@@ -80,6 +84,10 @@ def init_db():
                       updated_by TEXT,
                       updated_at TIMESTAMP)''')
     else:
+        c.execute('''CREATE TABLE IF NOT EXISTS admins
+                     (user_id INTEGER PRIMARY KEY,
+                      name TEXT,
+                      added_at TIMESTAMP)''')
         c.execute('''CREATE TABLE IF NOT EXISTS users
                      (user_id TEXT PRIMARY KEY,
                       name TEXT,
@@ -399,6 +407,51 @@ def restore_backup(file_path):
     conn.close()
     return True, f"Restored {len(backup_data['users'])} users, {len(backup_data['games'])} games, {len(backup_data['bets'])} bets"
 
+# ==================== ADMIN FUNCTIONS ====================
+def add_admin(user_id, name):
+    conn = get_conn()
+    c = conn.cursor()
+    if USE_PG:
+        c.execute(
+            f"INSERT INTO admins (user_id, name, added_at) VALUES ({Q(3)}) ON CONFLICT (user_id) DO UPDATE SET name = EXCLUDED.name",
+            (user_id, name, datetime.now())
+        )
+    else:
+        c.execute(
+            f"INSERT OR REPLACE INTO admins (user_id, name, added_at) VALUES ({Q(3)})",
+            (user_id, name, datetime.now())
+        )
+    conn.commit()
+    conn.close()
+
+def remove_admin(user_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(f"DELETE FROM admins WHERE user_id = {q()}", (user_id,))
+    affected = c.rowcount
+    conn.commit()
+    conn.close()
+    return affected > 0
+
+def is_admin(user_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(f"SELECT user_id FROM admins WHERE user_id = {q()}", (user_id,))
+    result = c.fetchone()
+    conn.close()
+    return result is not None
+
+def get_admins():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT user_id, name, added_at FROM admins ORDER BY added_at")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def is_staff(user_id):
+    return user_id == OWNER_ID or is_admin(user_id)
+
 # ==================== UTILITY ====================
 def parse_bet(text):
     text = text.lower().strip()
@@ -442,14 +495,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # GAME GROUP
     if chat.id == GAME_GROUP_ID:
-        if user.id == OWNER_ID:
+        if is_staff(user.id):
+            label = "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*" if user.id == OWNER_ID else "🛡 *Admin ထိန်းချုပ်ခန်း*"
             keyboard = [
                 [InlineKeyboardButton("🟢 ဂိမ်းစတင်ရန်", callback_data='game_start')],
                 [InlineKeyboardButton("🔴 ဂိမ်းပိတ်ရန်", callback_data='game_stop')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
-                text="👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*\n\nဂိမ်းစတင်ရန် သို့ ဂိမ်းပိတ်ရန် ခလုတ်နှိပ်ပါ။",
+                text=f"{label}\n\nဂိမ်းစတင်ရန် သို့ ဂိမ်းပိတ်ရန် ခလုတ်နှိပ်ပါ။",
                 reply_markup=reply_markup,
                 parse_mode='Markdown',
                 quote=True
@@ -471,7 +525,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # PRIVATE CHAT - Owner only
+    # PRIVATE CHAT - Owner full panel
     if chat.type == 'private' and user.id == OWNER_ID:
         keyboard = [
             [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image')],
@@ -487,6 +541,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
+        return
+
+    # PRIVATE CHAT - Admin limited panel
+    if chat.type == 'private' and is_admin(user.id):
+        await update.message.reply_text(
+            "🛡 *Admin ထိန်းချုပ်ခန်း*\n\nGroup ထဲတွင် /start နှိပ်ပြီး ဂိမ်းစ/ပိတ်နိုင်သည်။",
+            parse_mode='Markdown'
+        )
 
 # ==================== CALLBACK HANDLER ====================
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -496,10 +558,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     print(f"CALLBACK: {data} from {user.id}")
 
-    # ===== OWNER-ONLY CALLBACKS =====
-    if user.id != OWNER_ID:
-        await query.answer("ပိုင်ရှင်အတွက်သာဖြစ်ပါသည်", show_alert=True)
-        return
+    # game_start / game_stop → staff (owner or admin) only
+    if data in ['game_start', 'game_stop']:
+        if not is_staff(user.id):
+            await query.answer("Staff သာ အသုံးပြုနိုင်သည်", show_alert=True)
+            return
+    else:
+        # All other callbacks → owner only
+        if user.id != OWNER_ID:
+            await query.answer("ပိုင်ရှင်အတွက်သာဖြစ်ပါသည်", show_alert=True)
+            return
 
     # Image settings
     if data == 'set_start_image':
@@ -948,7 +1016,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if chat.id != GAME_GROUP_ID:
         return
-    if user.id != OWNER_ID or not update.message.dice:
+    if not is_staff(user.id) or not update.message.dice:
         return
     if not context.bot_data.get('awaiting_dice'):
         await update.message.reply_text("❌ ယခုအချိန်တွင် အံစာတုံးမလိုအပ်ပါ။")
@@ -1036,6 +1104,93 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.bot_data['awaiting_dice'] = False
     print(f"✅ Game {game_id} completed")
 
+# ==================== ADMIN COMMANDS ====================
+async def addadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != OWNER_ID:
+        return
+
+    target_id = None
+    target_name = None
+
+    if update.message.reply_to_message:
+        target = update.message.reply_to_message.from_user
+        target_id = target.id
+        target_name = target.full_name
+    elif context.args:
+        try:
+            target_id = int(context.args[0])
+            target_name = context.args[1] if len(context.args) > 1 else f"User {target_id}"
+        except ValueError:
+            await update.message.reply_text("❌ ID မှားနေသည်\nသုံးနည်း: /addadmin ID နာမည် (သို့) User ကို Reply လုပ်ပြီး /addadmin")
+            return
+    else:
+        await update.message.reply_text("❌ User ကို reply လုပ်ပြီး /addadmin\nသို့ /addadmin 123456789 နာမည်")
+        return
+
+    if target_id == OWNER_ID:
+        await update.message.reply_text("❌ ပိုင်ရှင်ကို Admin ခန့်ရန် မလိုပါ")
+        return
+
+    add_admin(target_id, target_name)
+    await update.message.reply_text(
+        f"✅ *Admin ခန့်ပြီး*\n👤 {target_name}\n🆔 `{target_id}`",
+        parse_mode='Markdown'
+    )
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text="🛡 *Admin အဖြစ် ခန့်ထားပြီးပါပြီ*\n\nGroup ထဲတွင် /start နှိပ်ပြီး ဂိမ်းစ/ပိတ်၊ အံစာတုံးပို့နိုင်သည်။",
+            parse_mode='Markdown'
+        )
+    except:
+        pass
+
+async def removeadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != OWNER_ID:
+        return
+
+    target_id = None
+    target_name = None
+
+    if update.message.reply_to_message:
+        target = update.message.reply_to_message.from_user
+        target_id = target.id
+        target_name = target.full_name
+    elif context.args:
+        try:
+            target_id = int(context.args[0])
+            target_name = f"User {target_id}"
+        except ValueError:
+            await update.message.reply_text("❌ ID မှားနေသည်")
+            return
+    else:
+        await update.message.reply_text("❌ User ကို reply လုပ်ပြီး /removeadmin\nသို့ /removeadmin 123456789")
+        return
+
+    removed = remove_admin(target_id)
+    if removed:
+        await update.message.reply_text(
+            f"✅ *Admin ဖယ်ရှားပြီး*\n👤 {target_name}\n🆔 `{target_id}`",
+            parse_mode='Markdown'
+        )
+    else:
+        await update.message.reply_text(f"❌ `{target_id}` Admin မဟုတ်ပါ", parse_mode='Markdown')
+
+async def listadmins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != OWNER_ID:
+        return
+    admins = get_admins()
+    if not admins:
+        await update.message.reply_text("📋 Admin မရှိသေးပါ")
+        return
+    text = "📋 *Admin စာရင်း*\n\n"
+    for i, row in enumerate(admins, 1):
+        text += f"{i}. {row[1]} — `{row[0]}`\n"
+    await update.message.reply_text(text, parse_mode='Markdown')
+
 # ==================== HEALTH CHECK SERVER ====================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1057,6 +1212,9 @@ def main():
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("addadmin", addadmin_command))
+    app.add_handler(CommandHandler("removeadmin", removeadmin_command))
+    app.add_handler(CommandHandler("listadmins", listadmins_command))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.Dice.ALL, handle_dice))
