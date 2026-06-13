@@ -501,19 +501,18 @@ def create_backup():
     c.execute("SELECT * FROM bets")
     for bet in c.fetchall():
         backup_data['bets'].append({
-            'id': bet[0], 'game_id': bet[1], 'user_id': bet[2],
-            'bet_number': bet[3], 'amount': bet[4], 'status': bet[5],
-            'win_amount': bet[6], 'timestamp': str(bet[7])
+            'id': bet[0], 'game_id': bet[1], 'user_id': bet[2], 'bet_number': bet[3],
+            'amount': bet[4], 'status': bet[5], 'win_amount': bet[6], 'timestamp': str(bet[7])
         })
     conn.close()
     filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(filename, 'w') as f:
-        json.dump(backup_data, f, indent=4)
+        json.dump(backup_data, f)
     return filename
 
-def restore_backup(filename):
+def restore_backup(file_path):
     try:
-        with open(filename, 'r') as f:
+        with open(file_path, 'r') as f:
             data = json.load(f)
         conn = get_conn()
         c = conn.cursor()
@@ -763,8 +762,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_staff(user.id):
             label = "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*" if user.id == OWNER_ID else "🛡 *Admin ထိန်းချုပ်ခန်း*"
             keyboard = [
-                [InlineKeyboardButton("🟢 ဂိမ်းစတင်ရန်", callback_data='game_start', style=KeyboardButtonStyle.SUCCESS)],
-                [InlineKeyboardButton("🔴 ဂိမ်းပိတ်ရန်", callback_data='game_stop', style=KeyboardButtonStyle.DANGER)]
+                [InlineKeyboardButton("🟢 ဂိမ်းစတင်ရန်", callback_data='game_start')],
+                [InlineKeyboardButton("🔴 ဂိမ်းပိတ်ရန်", callback_data='game_stop')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
@@ -795,13 +794,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         auto_dice = get_setting('auto_dice', 'off')
         auto_dice_label = "🎲 Auto Dice: ON" if auto_dice == 'on' else "🎲 Auto Dice: OFF"
         keyboard = [
-            [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image', style=KeyboardButtonStyle.PRIMARY)],
-            [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image', style=KeyboardButtonStyle.PRIMARY)],
-            [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image', style=KeyboardButtonStyle.PRIMARY)],
-            [InlineKeyboardButton(auto_dice_label, callback_data='toggle_auto_dice', style=KeyboardButtonStyle.SUCCESS if auto_dice == 'on' else KeyboardButtonStyle.DANGER)],
-            [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images', style=KeyboardButtonStyle.DANGER)],
-            [InlineKeyboardButton("💾 Backup", callback_data='backup_data', style=KeyboardButtonStyle.PRIMARY),
-             InlineKeyboardButton("🔄 Restore", callback_data='restore_data', style=KeyboardButtonStyle.PRIMARY)]
+            [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image')],
+            [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image')],
+            [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image')],
+            [InlineKeyboardButton(auto_dice_label, callback_data='toggle_auto_dice')],
+            [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images')],
+            [InlineKeyboardButton("💾 Backup", callback_data='backup_data'),
+             InlineKeyboardButton("🔄 Restore", callback_data='restore_data')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
@@ -836,8 +835,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_staff(user.id):
             await query.answer("Staff သာ အသုံးပြုနိုင်သည်", show_alert=True)
             return
-    else:
-        # All other callbacks → owner only
+    elif data in ['set_start_image', 'set_stop_image', 'set_result_image', 'delete_images', 'del_start', 'del_stop', 'del_result', 'back_to_main', 'toggle_auto_dice', 'backup_data', 'restore_data']:
+        # All other configuration callbacks → owner only
         if user.id != OWNER_ID:
             await query.answer("ပိုင်ရှင်အတွက်သာဖြစ်ပါသည်", show_alert=True)
             return
@@ -870,10 +869,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'delete_images':
         await query.answer()
         keyboard = [
-            [InlineKeyboardButton("🟢 Game Start ပုံဖျက်", callback_data='del_start', style=KeyboardButtonStyle.DANGER)],
-            [InlineKeyboardButton("🔴 Game Stop ပုံဖျက်", callback_data='del_stop', style=KeyboardButtonStyle.DANGER)],
-            [InlineKeyboardButton("🟡 Result ပုံဖျက်", callback_data='del_result', style=KeyboardButtonStyle.DANGER)],
-            [InlineKeyboardButton("◀️ နောက်သို့", callback_data='back_to_main', style=KeyboardButtonStyle.PRIMARY)]
+            [InlineKeyboardButton("🟢 Game Start ပုံဖျက်", callback_data='del_start')],
+            [InlineKeyboardButton("🔴 Game Stop ပုံဖျက်", callback_data='del_stop')],
+            [InlineKeyboardButton("🟡 Result ပုံဖျက်", callback_data='del_result')],
+            [InlineKeyboardButton("◀️ နောက်သို့", callback_data='back_to_main')]
         ]
         await query.edit_message_text(
             "🗑 *ဖျက်လိုသောပုံကိုရွေးပါ*",
@@ -901,13 +900,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         auto_dice = get_setting('auto_dice', 'off')
         auto_dice_label = "🎲 Auto Dice: ON" if auto_dice == 'on' else "🎲 Auto Dice: OFF"
         keyboard = [
-            [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image', style=KeyboardButtonStyle.PRIMARY)],
-            [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image', style=KeyboardButtonStyle.PRIMARY)],
-            [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image', style=KeyboardButtonStyle.PRIMARY)],
-            [InlineKeyboardButton(auto_dice_label, callback_data='toggle_auto_dice', style=KeyboardButtonStyle.SUCCESS if auto_dice == 'on' else KeyboardButtonStyle.DANGER)],
-            [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images', style=KeyboardButtonStyle.DANGER)],
-            [InlineKeyboardButton("💾 Backup", callback_data='backup_data', style=KeyboardButtonStyle.PRIMARY),
-             InlineKeyboardButton("🔄 Restore", callback_data='restore_data', style=KeyboardButtonStyle.PRIMARY)]
+            [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image')],
+            [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image')],
+            [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image')],
+            [InlineKeyboardButton(auto_dice_label, callback_data='toggle_auto_dice')],
+            [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images')],
+            [InlineKeyboardButton("💾 Backup", callback_data='backup_data'),
+             InlineKeyboardButton("🔄 Restore", callback_data='restore_data')]
         ]
         await query.edit_message_text(
             "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*",
@@ -923,13 +922,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         auto_dice_label = "🎲 Auto Dice: ON" if new_val == 'on' else "🎲 Auto Dice: OFF"
         keyboard = [
-            [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image', style=KeyboardButtonStyle.PRIMARY)],
-            [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image', style=KeyboardButtonStyle.PRIMARY)],
-            [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image', style=KeyboardButtonStyle.PRIMARY)],
-            [InlineKeyboardButton(auto_dice_label, callback_data='toggle_auto_dice', style=KeyboardButtonStyle.SUCCESS if new_val == 'on' else KeyboardButtonStyle.DANGER)],
-            [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images', style=KeyboardButtonStyle.DANGER)],
-            [InlineKeyboardButton("💾 Backup", callback_data='backup_data', style=KeyboardButtonStyle.PRIMARY),
-             InlineKeyboardButton("🔄 Restore", callback_data='restore_data', style=KeyboardButtonStyle.PRIMARY)]
+            [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image')],
+            [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image')],
+            [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image')],
+            [InlineKeyboardButton(auto_dice_label, callback_data='toggle_auto_dice')],
+            [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images')],
+            [InlineKeyboardButton("💾 Backup", callback_data='backup_data'),
+             InlineKeyboardButton("🔄 Restore", callback_data='restore_data')]
         ]
         await query.edit_message_text(
             "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*",
@@ -1336,21 +1335,15 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     dice_value = update.message.dice.value
     game_id = context.bot_data.get(f'current_game_id_{chat_id}')
-    print(f"🎲 DICE: {dice_value} | Game: {game_id}")
+    print(f"🎲 DICE: {dice_value} for {game_id}")
 
-    if not game_id:
-        await update.message.reply_text("❌ ဂိမ်းမရှိပါ။")
-        return
-
+    # Process result
+    winners, total_win_amount = update_bet_results(game_id, dice_value)
     game = get_current_game(chat_id)
     if not game:
-        return
+        game = {'total_bet_amount': 0} # Should not happen
 
-    # Wait for dice animation to fully stop before processing
-    await asyncio.sleep(4)
-
-    winners, total_win_amount = update_bet_results(game_id, dice_value)
-    total_bet_amount = game['total_bet_amount']
+    total_bet_amount = game.get('total_bet_amount', 0)
     owner_profit = total_bet_amount - total_win_amount
     close_game(game_id, dice_value, total_win_amount, owner_profit)
 
@@ -1377,32 +1370,19 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     custom_image = get_game_image('game_result')
     if custom_image:
-        await context.bot.send_photo(
-            chat_id=chat_id,
-            photo=custom_image,
-            caption=result_text,
-            parse_mode='Markdown',
-            reply_markup=get_owner_button()
-        )
+        await context.bot.send_photo(chat_id=chat_id, photo=custom_image, caption=result_text, parse_mode='Markdown', reply_markup=get_owner_button())
     else:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=result_text,
-            parse_mode='Markdown',
-            reply_markup=get_owner_button()
-        )
+        await context.bot.send_message(chat_id=chat_id, text=result_text, parse_mode='Markdown', reply_markup=get_owner_button())
 
-    # Remove the keyboard now that the game is over
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text="🔚 ပွဲစဉ်ပြီးပါပြီ",
-        reply_markup=ReplyKeyboardRemove()
-    )
+    await context.bot.send_message(chat_id=chat_id, text="🔚 ပွဲစဉ်ပြီးပါပြီ")
+    context.bot_data[f'awaiting_dice_{chat_id}'] = False
 
+    # Report to owner
     try:
+        group_title = chat.title
         owner_report = (
             f"📊 *ပွဲစဉ်အစီရင်ခံစာ*\n\n"
-            f"Group: {chat.title}\n"
+            f"Group: {group_title}\n"
             f"ပွဲစဉ်: `{game_id}`\n"
             f"အံစာတုံး: {dice_value}\n"
             f"စုစုပေါင်းလောင်းငွေ: {total_bet_amount:,} ကျပ်\n"
@@ -1410,86 +1390,38 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"အမြတ်: {owner_profit:,} ကျပ်"
         )
         await context.bot.send_message(chat_id=OWNER_ID, text=owner_report, parse_mode='Markdown')
-    except Exception as e:
-        print(f"❌ Owner report failed: {e}")
+    except: pass
 
-    context.bot_data[f'current_game_id_{chat_id}'] = None
-    context.bot_data[f'awaiting_dice_{chat_id}'] = False
-    print(f"✅ Game {game_id} completed")
-
-# ==================== ADMIN COMMANDS ====================
 async def addadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != OWNER_ID:
         return
-
-    target_id = None
-    target_name = None
-
-    if update.message.reply_to_message:
-        target = update.message.reply_to_message.from_user
-        target_id = target.id
-        target_name = target.full_name
-    elif context.args:
-        try:
-            target_id = int(context.args[0])
-            target_name = context.args[1] if len(context.args) > 1 else f"User {target_id}"
-        except ValueError:
-            await update.message.reply_text("❌ ID မှားနေသည်\nသုံးနည်း: /addadmin ID နာမည် (သို့) User ကို Reply လုပ်ပြီး /addadmin")
-            return
-    else:
-        await update.message.reply_text("❌ User ကို reply လုပ်ပြီး /addadmin\nသို့ /addadmin 123456789 နာမည်")
+    if not context.args:
+        await update.message.reply_text("❌ User ID ထည့်ပါ။\nသုံးနည်း: `/addadmin 123456789 Name`", parse_mode='Markdown')
         return
-
-    if target_id == OWNER_ID:
-        await update.message.reply_text("❌ ပိုင်ရှင်ကို Admin ခန့်ရန် မလိုပါ")
-        return
-
-    add_admin(target_id, target_name)
-    await update.message.reply_text(
-        f"✅ *Admin ခန့်ပြီး*\n👤 {target_name}\n🆔 `{target_id}`",
-        parse_mode='Markdown'
-    )
     try:
-        await context.bot.send_message(
-            chat_id=target_id,
-            text="🛡 *Admin အဖြစ် ခန့်ထားပြီးပါပြီ*\n\nGroup ထဲတွင် /start နှိပ်ပြီး ဂိမ်းစ/ပိတ်၊ အံစာတုံးပို့နိုင်သည်။",
-            parse_mode='Markdown'
-        )
-    except:
-        pass
+        admin_id = int(context.args[0])
+        name = " ".join(context.args[1:]) if len(context.args) > 1 else f"Admin {admin_id}"
+        add_admin(admin_id, name)
+        await update.message.reply_text(f"✅ Admin Added: `{name}` ({admin_id})", parse_mode='Markdown')
+    except ValueError:
+        await update.message.reply_text("❌ User ID သည် ဂဏန်းဖြစ်ရပါမည်။")
 
 async def removeadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != OWNER_ID:
         return
-
-    target_id = None
-    target_name = None
-
-    if update.message.reply_to_message:
-        target = update.message.reply_to_message.from_user
-        target_id = target.id
-        target_name = target.full_name
-    elif context.args:
-        try:
-            target_id = int(context.args[0])
-            target_name = f"User {target_id}"
-        except ValueError:
-            await update.message.reply_text("❌ ID မှားနေသည်")
-            return
-    else:
-        await update.message.reply_text("❌ User ကို reply လုပ်ပြီး /removeadmin\nသို့ /removeadmin 123456789")
+    if not context.args:
+        await update.message.reply_text("❌ User ID ထည့်ပါ။\nသုံးနည်း: `/removeadmin 123456789`", parse_mode='Markdown')
         return
-
-    removed = remove_admin(target_id)
-    if removed:
-        await update.message.reply_text(
-            f"✅ *Admin ဖယ်ရှားပြီး*\n👤 {target_name}\n🆔 `{target_id}`",
-            parse_mode='Markdown'
-        )
-    else:
-        await update.message.reply_text(f"❌ `{target_id}` Admin မဟုတ်ပါ", parse_mode='Markdown')
+    try:
+        admin_id = int(context.args[0])
+        if remove_admin(admin_id):
+            await update.message.reply_text(f"✅ Admin Removed: `{admin_id}`", parse_mode='Markdown')
+        else:
+            await update.message.reply_text(f"❌ Admin `{admin_id}` ကို စာရင်းထဲတွင် မတွေ့ပါ။", parse_mode='Markdown')
+    except ValueError:
+        await update.message.reply_text("❌ User ID သည် ဂဏန်းဖြစ်ရပါမည်။")
 
 async def listadmins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -1497,14 +1429,13 @@ async def listadmins_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     admins = get_admins()
     if not admins:
-        await update.message.reply_text("📋 Admin မရှိသေးပါ")
+        await update.message.reply_text("📋 Admin မရှိသေးပါ။")
         return
-    text = "📋 *Admin စာရင်း*\n\n"
+    text = "📋 *Admins စာရင်း*\n\n"
     for i, row in enumerate(admins, 1):
         text += f"{i}. {row[1]} — `{row[0]}`\n"
     await update.message.reply_text(text, parse_mode='Markdown')
 
-# ==================== GROUP COMMANDS ====================
 async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != OWNER_ID:
@@ -1514,9 +1445,9 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         group_id = int(context.args[0])
-        title = context.args[1] if len(context.args) > 1 else f"Group {group_id}"
+        title = " ".join(context.args[1:]) if len(context.args) > 1 else f"Group {group_id}"
         approve_group(group_id, title)
-        await update.message.reply_text(f"✅ Group Approved:\nTitle: {title}\nID: `{group_id}`", parse_mode='Markdown')
+        await update.message.reply_text(f"✅ Group Approved: `{title}` ({group_id})", parse_mode='Markdown')
     except ValueError:
         await update.message.reply_text("❌ Group ID သည် ဂဏန်းဖြစ်ရပါမည်။")
 
@@ -1529,8 +1460,7 @@ async def remove_group_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     try:
         group_id = int(context.args[0])
-        removed = remove_group(group_id)
-        if removed:
+        if remove_group(group_id):
             await update.message.reply_text(f"✅ Group Removed: `{group_id}`", parse_mode='Markdown')
         else:
             await update.message.reply_text(f"❌ Group `{group_id}` ကို စာရင်းထဲတွင် မတွေ့ပါ။", parse_mode='Markdown')
