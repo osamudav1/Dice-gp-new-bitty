@@ -4,6 +4,7 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
+    healthCheckPath: /
     envVars:
       - key: BOT_TOKEN
         sync: false
@@ -15,6 +16,8 @@ services:
         fromDatabase:
           name: dice-game-db
           property: connectionString
+      - key: PORT
+        value: "8080"
 
 databases:
   - name: dice-game-db
