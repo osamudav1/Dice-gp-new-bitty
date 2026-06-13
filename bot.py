@@ -703,12 +703,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mention = f"@{user.username}" if user.username else user.full_name
     create_or_update_user(user.id, user.full_name, mention)
 
-    # Restricted to GAME_GROUP_ID or Private chat
-    if chat.type != 'private' and chat.id != GAME_GROUP_ID:
+    # Restricted to Private chat or Groups
+    if chat.type not in ['private', 'group', 'supergroup']:
         return
 
-    # GAME GROUP
-    if chat.id == GAME_GROUP_ID:
+    # GAME GROUP / ANY GROUP
+    if chat.type in ['group', 'supergroup']:
         if is_staff(user.id):
             label = "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*" if user.id == OWNER_ID else "🛡 *Admin ထိန်းချုပ်ခန်း*"
             keyboard = [
@@ -912,10 +912,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Game control (in group)
     elif data in ['game_start', 'game_stop']:
-        if chat_id != GAME_GROUP_ID:
-            await query.answer("ဤ Group တွင် အသုံးပြု၍မရပါ", show_alert=True)
-            return
-
         await query.answer()
 
         if data == 'game_start':
@@ -1047,8 +1043,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ ပုံကိုသာ ပို့ပါ။")
             return
 
-    # ===== GAME GROUP =====
-    if chat.id == GAME_GROUP_ID:
+    # ===== GAME GROUP / ANY GROUP =====
+    if chat.type in ['group', 'supergroup']:
         # Check for reply to balance update (e.g., +5000 or -2000)
         if is_staff(user.id) and update.message.reply_to_message:
             reply_text = text.strip()
@@ -1314,7 +1310,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     chat_id = chat.id
 
-    if chat_id != GAME_GROUP_ID:
+    if chat.type not in ['group', 'supergroup']:
         return
     if not is_staff(user.id) or not update.message.dice:
         return
