@@ -79,11 +79,11 @@ def init_db():
                       win_amount BIGINT DEFAULT 0,
                       timestamp TIMESTAMP)''')
         c.execute('''CREATE TABLE IF NOT EXISTS game_images
-	                     (id BIGSERIAL PRIMARY KEY,
-	                      image_type TEXT UNIQUE,
-	                      photo_id TEXT,
-	                      updated_by TEXT,
-	                      updated_at TIMESTAMP)''')
+                         (id BIGSERIAL PRIMARY KEY,
+                          image_type TEXT UNIQUE,
+                          photo_id TEXT,
+                          updated_by TEXT,
+                          updated_at TIMESTAMP)''')
         c.execute('''CREATE TABLE IF NOT EXISTS settings
                      (key TEXT PRIMARY KEY,
                       value TEXT)''')
@@ -119,15 +119,15 @@ def init_db():
                       win_amount INTEGER DEFAULT 0,
                       timestamp TIMESTAMP)''')
         c.execute('''CREATE TABLE IF NOT EXISTS game_images
-	                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-	                      image_type TEXT UNIQUE,
-	                      photo_id TEXT,
-	                      updated_by TEXT,
-	                      updated_at TIMESTAMP)''')
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          image_type TEXT UNIQUE,
+                          photo_id TEXT,
+                          updated_by TEXT,
+                          updated_at TIMESTAMP)''')
         c.execute('''CREATE TABLE IF NOT EXISTS settings
                      (key TEXT PRIMARY KEY,
                       value TEXT)''')
-	    conn.commit()
+        conn.commit()
     conn.close()
 
 # ==================== IMAGE FUNCTIONS ====================
