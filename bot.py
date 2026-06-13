@@ -128,7 +128,7 @@ def init_db():
         c.execute('''CREATE TABLE IF NOT EXISTS settings
                      (key TEXT PRIMARY KEY,
                       value TEXT)''')
-        conn.commit()
+    conn.commit()
     conn.close()
 
 # ==================== CHAT PERMISSION FUNCTIONS ====================
@@ -924,9 +924,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             # Unlock chat when game starts
-            await unlock_chat(context.bot, GAME_GROUP_ID)
+            await unlock_chat(context.bot, chat_id)
 
-            game_id = create_game(GAME_GROUP_ID)
+            game_id = create_game(chat_id)
 
             caption = (
                 f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
@@ -939,7 +939,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 if custom_image:
                     await context.bot.send_photo(
-                        chat_id=GAME_GROUP_ID,
+                        chat_id=chat_id,
                         photo=custom_image,
                         caption=caption,
                         parse_mode='Markdown',
@@ -947,14 +947,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 else:
                     await context.bot.send_message(
-                        chat_id=GAME_GROUP_ID,
+                        chat_id=chat_id,
                         text=caption,
                         parse_mode='Markdown',
                         reply_markup=get_user_game_keyboard()
                     )
             except Exception as e:
                 print(f"Error sending game start: {e}")
-                await context.bot.send_message(chat_id=GAME_GROUP_ID, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
+                await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
 
         elif data == 'game_stop':
             game = get_current_game()
@@ -963,7 +963,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             # Lock chat when game stops
-            await lock_chat(context.bot, GAME_GROUP_ID)
+            await lock_chat(context.bot, chat_id)
 
             game_id = game['game_id']
             bets = get_game_bets(game_id)
@@ -982,7 +982,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 if custom_image:
                     await context.bot.send_photo(
-                        chat_id=GAME_GROUP_ID,
+                        chat_id=chat_id,
                         photo=custom_image,
                         caption=bet_text,
                         parse_mode='Markdown',
@@ -990,24 +990,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 else:
                     await context.bot.send_message(
-                        chat_id=GAME_GROUP_ID,
+                        chat_id=chat_id,
                         text=bet_text,
                         parse_mode='Markdown',
                         reply_markup=get_owner_button()
                     )
             except Exception as e:
                 print(f"Error sending game stop: {e}")
-                await context.bot.send_message(chat_id=GAME_GROUP_ID, text=bet_text, parse_mode='Markdown', reply_markup=get_owner_button())
+                await context.bot.send_message(chat_id=chat_id, text=bet_text, parse_mode='Markdown', reply_markup=get_owner_button())
 
             await context.bot.send_message(
-                chat_id=GAME_GROUP_ID,
+                chat_id=chat_id,
                 text="🎲 Owner — ကျေးဇူးပြု၍ အံစာတုံး ၁ တုံး ပို့ပေးပါ ⏳",
                 parse_mode='Markdown',
                 reply_markup=ReplyKeyboardRemove()
             )
 
-            context.bot_data[f'current_game_id_{GAME_GROUP_ID}'] = game_id
-            context.bot_data[f'awaiting_dice_{GAME_GROUP_ID}'] = True
+            context.bot_data[f'current_game_id_{chat_id}'] = game_id
+            context.bot_data[f'awaiting_dice_{chat_id}'] = True
 
 # ==================== MESSAGE HANDLER ====================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
