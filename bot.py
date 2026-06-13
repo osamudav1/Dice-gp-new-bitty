@@ -703,6 +703,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mention = f"@{user.username}" if user.username else user.full_name
     create_or_update_user(user.id, user.full_name, mention)
 
+    # Restricted to GAME_GROUP_ID or Private chat
+    if chat.type != 'private' and chat.id != GAME_GROUP_ID:
+        return
+
     # GAME GROUP
     if chat.id == GAME_GROUP_ID:
         if is_staff(user.id):

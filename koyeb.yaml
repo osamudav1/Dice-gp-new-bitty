@@ -15,14 +15,7 @@ service:
       value: "123456789"
     - name: GAME_GROUP_ID
       value: "-1001234567890"
-    - name: DEPOSIT_GROUP_ID
-      value: "-1001234567891"
-    - name: GAME_GROUP_URL
-      value: "https://t.me/your_game_group"
-    - name: DEPOSIT_URL
-      value: "https://t.me/your_deposit_group"
-    - name: WITHDRAW_URL
-      value: "https://t.me/your_withdraw_group"
+
   routes:
     - path: /
       port: 8080
