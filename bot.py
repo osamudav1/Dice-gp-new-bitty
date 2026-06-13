@@ -966,7 +966,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['awaiting_restore'] = True
 
     # Game control (in group)
-    elif data in ['game_start', 'game_stop'] and is_group_approved(chat_id):
+    elif data in ['game_start', 'game_stop']:
+        # Ensure it's a group and it's approved
+        if not is_group_approved(chat_id):
+            await query.answer("ဤ Group သည် ခွင့်ပြုချက်မရသေးပါ", show_alert=True)
+            return
+
         await query.answer()
 
         if data == 'game_start':
@@ -987,21 +992,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             custom_image = get_game_image('game_start')
-            if custom_image:
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=custom_image,
-                    caption=caption,
-                    parse_mode='Markdown',
-                    reply_markup=get_user_game_keyboard()
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=caption,
-                    parse_mode='Markdown',
-                    reply_markup=get_user_game_keyboard()
-                )
+            try:
+                if custom_image:
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=custom_image,
+                        caption=caption,
+                        parse_mode='Markdown',
+                        reply_markup=get_user_game_keyboard()
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=caption,
+                        parse_mode='Markdown',
+                        reply_markup=get_user_game_keyboard()
+                    )
+            except Exception as e:
+                print(f"Error sending game start: {e}")
+                await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
 
         elif data == 'game_stop':
             game = get_current_game(chat_id)
@@ -1026,21 +1035,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 bet_text += "😢 လောင်းကြေးမရှိပါ"
 
             custom_image = get_game_image('game_stop')
-            if custom_image:
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=custom_image,
-                    caption=bet_text,
-                    parse_mode='Markdown',
-                    reply_markup=get_owner_button()
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=bet_text,
-                    parse_mode='Markdown',
-                    reply_markup=get_owner_button()
-                )
+            try:
+                if custom_image:
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=custom_image,
+                        caption=bet_text,
+                        parse_mode='Markdown',
+                        reply_markup=get_owner_button()
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=bet_text,
+                        parse_mode='Markdown',
+                        reply_markup=get_owner_button()
+                    )
+            except Exception as e:
+                print(f"Error sending game stop: {e}")
+                await context.bot.send_message(chat_id=chat_id, text=bet_text, parse_mode='Markdown', reply_markup=get_owner_button())
 
             await context.bot.send_message(
                 chat_id=chat_id,
