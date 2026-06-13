@@ -1049,6 +1049,50 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== GAME GROUP =====
     if chat.id == GAME_GROUP_ID:
+        # Check for reply to balance update (e.g., +5000 or -2000)
+        if is_staff(user.id) and update.message.reply_to_message:
+            reply_text = text.strip()
+            if reply_text.startswith('+') or reply_text.startswith('-'):
+                target_user = update.message.reply_to_message.from_user
+                if not target_user.is_bot:
+                    # Create/Update user just in case
+                    target_mention = f"@{target_user.username}" if target_user.username else target_user.full_name
+                    create_or_update_user(target_user.id, target_user.full_name, target_mention)
+                    
+                    try:
+                        operation = 'add' if reply_text.startswith('+') else 'subtract'
+                        amount = int(reply_text[1:])
+                        user_data = get_user(target_user.id)
+                        
+                        if operation == 'subtract' and user_data['balance'] < amount:
+                            await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
+                            return
+
+                        prev_balance = user_data['balance']
+                        new_balance = update_balance(target_user.id, amount, operation)
+                        
+                        op_sign = "+" if operation == 'add' else "-"
+                        op_name = "သွင်း" if operation == 'add' else "ထုတ်"
+                        
+                        # Notify target user
+                        try:
+                            await context.bot.send_message(
+                                chat_id=target_user.id,
+                                text=f"✅ *ငွေ{op_name}ပြီးပါပြီ*\n\n"
+                                     f"👤 {user_data['name']}\n"
+                                     f"🆔 `{target_user.id}`\n"
+                                     f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
+                                     f"💰 {op_name}ငွေ: {op_sign}{amount:,} ကျပ်\n"
+                                     f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
+                                parse_mode='Markdown'
+                            )
+                        except: pass
+                        
+                        await update.message.reply_text(f"✅ {user_data['name']} ထံ {op_sign}{amount:,} ကျပ် {op_name}ပြီးပါပြီ")
+                        return
+                    except ValueError:
+                        pass # Not a valid number, continue to other handlers
+
         game = get_current_game()
 
         # ===== KEYBOARD BUTTON ACTIONS =====
