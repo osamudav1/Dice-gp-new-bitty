@@ -79,11 +79,14 @@ def init_db():
                       win_amount BIGINT DEFAULT 0,
                       timestamp TIMESTAMP)''')
         c.execute('''CREATE TABLE IF NOT EXISTS game_images
-                     (id BIGSERIAL PRIMARY KEY,
-                      image_type TEXT UNIQUE,
-                      photo_id TEXT,
-                      updated_by TEXT,
-                      updated_at TIMESTAMP)''')
+	                     (id BIGSERIAL PRIMARY KEY,
+	                      image_type TEXT UNIQUE,
+	                      photo_id TEXT,
+	                      updated_by TEXT,
+	                      updated_at TIMESTAMP)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS settings
+                     (key TEXT PRIMARY KEY,
+                      value TEXT)''')
     else:
         c.execute('''CREATE TABLE IF NOT EXISTS admins
                      (user_id INTEGER PRIMARY KEY,
@@ -116,12 +119,15 @@ def init_db():
                       win_amount INTEGER DEFAULT 0,
                       timestamp TIMESTAMP)''')
         c.execute('''CREATE TABLE IF NOT EXISTS game_images
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      image_type TEXT UNIQUE,
-                      photo_id TEXT,
-                      updated_by TEXT,
-                      updated_at TIMESTAMP)''')
-    conn.commit()
+	                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+	                      image_type TEXT UNIQUE,
+	                      photo_id TEXT,
+	                      updated_by TEXT,
+	                      updated_at TIMESTAMP)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS settings
+                     (key TEXT PRIMARY KEY,
+                      value TEXT)''')
+	    conn.commit()
     conn.close()
 
 # ==================== IMAGE FUNCTIONS ====================
@@ -156,6 +162,24 @@ def delete_game_image(image_type):
     c.execute(f"DELETE FROM game_images WHERE image_type = {q()}", (image_type,))
     conn.commit()
     conn.close()
+
+def set_setting(key, value):
+    conn = get_conn()
+    c = conn.cursor()
+    if USE_PG:
+        c.execute(f"INSERT INTO settings (key, value) VALUES ({Q(2)}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (key, str(value)))
+    else:
+        c.execute(f"INSERT OR REPLACE INTO settings (key, value) VALUES ({Q(2)})", (key, str(value)))
+    conn.commit()
+    conn.close()
+
+def get_setting(key, default=None):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(f"SELECT value FROM settings WHERE key = {q()}", (key,))
+    result = c.fetchone()
+    conn.close()
+    return result[0] if result else default
 
 # ==================== DATABASE FUNCTIONS ====================
 def get_next_game_id():
@@ -528,10 +552,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # PRIVATE CHAT - Owner full panel
     if chat.type == 'private' and user.id == OWNER_ID:
+        auto_dice = get_setting('auto_dice', 'off')
+        auto_dice_label = "🎲 Auto Dice: ON" if auto_dice == 'on' else "🎲 Auto Dice: OFF"
         keyboard = [
             [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image', style=KeyboardButtonStyle.PRIMARY)],
             [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image', style=KeyboardButtonStyle.PRIMARY)],
             [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image', style=KeyboardButtonStyle.PRIMARY)],
+            [InlineKeyboardButton(auto_dice_label, callback_data='toggle_auto_dice', style=KeyboardButtonStyle.SUCCESS if auto_dice == 'on' else KeyboardButtonStyle.DANGER)],
             [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images', style=KeyboardButtonStyle.DANGER)],
             [InlineKeyboardButton("💾 Backup", callback_data='backup_data', style=KeyboardButtonStyle.PRIMARY),
              InlineKeyboardButton("🔄 Restore", callback_data='restore_data', style=KeyboardButtonStyle.PRIMARY)]
@@ -626,10 +653,35 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == 'back_to_main':
         await query.answer()
+        auto_dice = get_setting('auto_dice', 'off')
+        auto_dice_label = "🎲 Auto Dice: ON" if auto_dice == 'on' else "🎲 Auto Dice: OFF"
         keyboard = [
             [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image', style=KeyboardButtonStyle.PRIMARY)],
             [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image', style=KeyboardButtonStyle.PRIMARY)],
             [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image', style=KeyboardButtonStyle.PRIMARY)],
+            [InlineKeyboardButton(auto_dice_label, callback_data='toggle_auto_dice', style=KeyboardButtonStyle.SUCCESS if auto_dice == 'on' else KeyboardButtonStyle.DANGER)],
+            [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images', style=KeyboardButtonStyle.DANGER)],
+            [InlineKeyboardButton("💾 Backup", callback_data='backup_data', style=KeyboardButtonStyle.PRIMARY),
+             InlineKeyboardButton("🔄 Restore", callback_data='restore_data', style=KeyboardButtonStyle.PRIMARY)]
+        ]
+        await query.edit_message_text(
+            "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+
+    elif data == 'toggle_auto_dice':
+        current = get_setting('auto_dice', 'off')
+        new_val = 'on' if current == 'off' else 'off'
+        set_setting('auto_dice', new_val)
+        await query.answer(f"🎲 Auto Dice: {new_val.upper()}")
+        
+        auto_dice_label = "🎲 Auto Dice: ON" if new_val == 'on' else "🎲 Auto Dice: OFF"
+        keyboard = [
+            [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image', style=KeyboardButtonStyle.PRIMARY)],
+            [InlineKeyboardButton("🖼 Game Stop ပုံထည့်", callback_data='set_stop_image', style=KeyboardButtonStyle.PRIMARY)],
+            [InlineKeyboardButton("🖼 Result ပုံထည့်", callback_data='set_result_image', style=KeyboardButtonStyle.PRIMARY)],
+            [InlineKeyboardButton(auto_dice_label, callback_data='toggle_auto_dice', style=KeyboardButtonStyle.SUCCESS if new_val == 'on' else KeyboardButtonStyle.DANGER)],
             [InlineKeyboardButton("🗑 ပုံဖျက်ရန်", callback_data='delete_images', style=KeyboardButtonStyle.DANGER)],
             [InlineKeyboardButton("💾 Backup", callback_data='backup_data', style=KeyboardButtonStyle.PRIMARY),
              InlineKeyboardButton("🔄 Restore", callback_data='restore_data', style=KeyboardButtonStyle.PRIMARY)]
@@ -754,6 +806,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             context.bot_data['current_game_id'] = game_id
             context.bot_data['awaiting_dice'] = True
+
+            # AUTO DICE LOGIC
+            if get_setting('auto_dice', 'off') == 'on':
+                await asyncio.sleep(2)
+                await context.bot.send_message(
+                    chat_id=GAME_GROUP_ID,
+                    text="🤖 *Auto Dice Mode: ON*\nBot မှ အလိုအလျောက် အံစာတုံးလှည့်ပေးနေပါသည်...",
+                    parse_mode='Markdown'
+                )
+                await asyncio.sleep(1)
+                await context.bot.send_dice(chat_id=GAME_GROUP_ID)
 
 # ==================== MESSAGE HANDLER ====================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
