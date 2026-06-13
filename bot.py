@@ -13,7 +13,6 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, ChatPermissions
-from telegram.constants import KeyboardButtonStyle
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes
@@ -22,8 +21,7 @@ from telegram.ext import (
 # ==================== CONFIGURATION ====================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 OWNER_ID = int(os.environ.get("OWNER_ID", "123456789"))
-# Default group for fallback, but now we support multiple
-DEFAULT_GAME_GROUP_ID = int(os.environ.get("GAME_GROUP_ID", "-1002849045181"))
+GAME_GROUP_ID = int(os.environ.get("GAME_GROUP_ID", "-1002849045181"))
 
 MIN_BET = 50
 MAX_BET = 1000
@@ -52,10 +50,6 @@ def init_db():
         c.execute('''CREATE TABLE IF NOT EXISTS admins
                      (user_id BIGINT PRIMARY KEY,
                       name TEXT,
-                      added_at TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS approved_groups
-                     (group_id BIGINT PRIMARY KEY,
-                      title TEXT,
                       added_at TIMESTAMP)''')
         c.execute('''CREATE TABLE IF NOT EXISTS users
                      (user_id TEXT PRIMARY KEY,
@@ -98,10 +92,6 @@ def init_db():
                      (user_id INTEGER PRIMARY KEY,
                       name TEXT,
                       added_at TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS approved_groups
-                     (group_id INTEGER PRIMARY KEY,
-                      title TEXT,
-                      added_at TIMESTAMP)''')
         c.execute('''CREATE TABLE IF NOT EXISTS users
                      (user_id TEXT PRIMARY KEY,
                       name TEXT,
@@ -138,46 +128,8 @@ def init_db():
         c.execute('''CREATE TABLE IF NOT EXISTS settings
                      (key TEXT PRIMARY KEY,
                       value TEXT)''')
-        # Insert default group if table was just created
-        c.execute(f"INSERT OR IGNORE INTO approved_groups (group_id, title, added_at) VALUES ({q()}, 'Default Group', {q()})", (DEFAULT_GAME_GROUP_ID, datetime.now()))
         conn.commit()
     conn.close()
-
-# ==================== GROUP MANAGEMENT FUNCTIONS ====================
-def approve_group(group_id, title):
-    conn = get_conn()
-    c = conn.cursor()
-    if USE_PG:
-        c.execute(f"INSERT INTO approved_groups (group_id, title, added_at) VALUES ({Q(3)}) ON CONFLICT (group_id) DO UPDATE SET title = EXCLUDED.title", (group_id, title, datetime.now()))
-    else:
-        c.execute(f"INSERT OR REPLACE INTO approved_groups (group_id, title, added_at) VALUES ({Q(3)})", (group_id, title, datetime.now()))
-    conn.commit()
-    conn.close()
-
-def remove_group(group_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"DELETE FROM approved_groups WHERE group_id = {q()}", (group_id,))
-    affected = c.rowcount
-    conn.commit()
-    conn.close()
-    return affected > 0
-
-def is_group_approved(group_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"SELECT group_id FROM approved_groups WHERE group_id = {q()}", (group_id,))
-    result = c.fetchone()
-    conn.close()
-    return result is not None
-
-def get_approved_groups():
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT group_id, title FROM approved_groups")
-    rows = c.fetchall()
-    conn.close()
-    return rows
 
 # ==================== CHAT PERMISSION FUNCTIONS ====================
 async def lock_chat(bot, chat_id):
@@ -342,13 +294,10 @@ def update_user_stats(user_id, bet_amount, win_amount=0):
     conn.commit()
     conn.close()
 
-def get_current_game(chat_id=None):
+def get_current_game():
     conn = get_conn()
     c = conn.cursor()
-    if chat_id:
-        c.execute(f"SELECT * FROM games WHERE status = 'open' AND chat_id = {q()} ORDER BY game_id DESC LIMIT 1", (chat_id,))
-    else:
-        c.execute("SELECT * FROM games WHERE status = 'open' ORDER BY game_id DESC LIMIT 1")
+    c.execute("SELECT * FROM games WHERE status = 'open' ORDER BY game_id DESC LIMIT 1")
     game = c.fetchone()
     conn.close()
     if game:
@@ -523,7 +472,7 @@ def restore_backup(file_path):
         c.execute("DELETE FROM games")
         for g in data['games']:
             c.execute(f"INSERT INTO games (id, game_id, chat_id, status, result_number, total_bet_amount, total_win_amount, owner_profit, created_at, closed_at) VALUES ({Q(10)})",
-                      (g['id'], g['game_id'], g.get('chat_id', DEFAULT_GAME_GROUP_ID), g['status'], g['result_number'], g['total_bet_amount'], g['total_win_amount'], g['owner_profit'], g['created_at'], g['closed_at']))
+                      (g['id'], g['game_id'], g.get('chat_id', GAME_GROUP_ID), g['status'], g['result_number'], g['total_bet_amount'], g['total_win_amount'], g['owner_profit'], g['created_at'], g['closed_at']))
         c.execute("DELETE FROM bets")
         for b in data['bets']:
             c.execute(f"INSERT INTO bets (id, game_id, user_id, bet_number, amount, status, win_amount, timestamp) VALUES ({Q(8)})",
@@ -614,135 +563,132 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                 await asyncio.sleep(5)
                 continue
 
-            groups = get_approved_groups()
-            for group_id, group_title in groups:
-                game = get_current_game(group_id)
-                if not game:
-                    # No game running, wait 3s and start new game
-                    await asyncio.sleep(3)
-                    if get_setting('auto_dice', 'off') != 'on': continue
-                    
-                    # Unlock chat for betting
-                    await unlock_chat(context.bot, group_id)
-                    
-                    game_id = create_game(group_id)
-                    caption = (
-                        f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
-                        f"နံပါတ် ၁ မှ ၆ ထိ လောင်းနိုင်ပါသည်\n"
-                        f"တစ်ယောက် နှစ်ကြိမ်အထိ လောင်းနိုင်သည် (မတူသောနံပါတ်)\n"
-                        f"Min {MIN_BET:,}ကျပ် │ Max {MAX_BET:,}ကျပ်"
-                    )
-                    
-                    custom_image = get_game_image('game_start')
-                    try:
-                        if custom_image:
-                            await context.bot.send_photo(chat_id=group_id, photo=custom_image, caption=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
-                        else:
-                            await context.bot.send_message(chat_id=group_id, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
-                    except Exception as e:
-                        print(f"Error starting game in {group_id}: {e}")
-                    continue
-
-                # Game is open, check if anyone has bet
-                bets = get_game_bets(game['game_id'])
-                if bets:
-                    # Someone bet, wait 30s then stop game
-                    try:
-                        await context.bot.send_message(chat_id=group_id, text="⏳ လောင်းကြေးများ ရောက်ရှိလာပါပြီ။ နောက် ၃၀ စက္ကန့်အတွင်း ပွဲပိတ်ပါမည်။")
-                    except: pass
-                    await asyncio.sleep(30)
-                    
-                    # Stop game logic
-                    game = get_current_game(group_id) # Re-fetch to be sure
-                    if not game: continue
-                    
-                    # Lock chat when game stops
-                    await lock_chat(context.bot, group_id)
-                    
-                    game_id = game['game_id']
-                    bets = get_game_bets(game_id)
-                    
-                    bet_text = f"🎲 *ပွဲစဉ်* — `{game_id}`\n➖ လောင်းကြေးပိတ်ပြီ ➖\n\n"
-                    if bets:
-                        total_bet = 0
-                        for bet in bets:
-                            bet_text += f"👤 {bet['user_name']} — နံပါတ် {bet['bet_number']} — {bet['amount']:,} ကျပ်\n"
-                            total_bet += bet['amount']
-                        bet_text += f"\n💵 စုစုပေါင်း: {total_bet:,} ကျပ်"
+            game = get_current_game()
+            if not game:
+                # No game running, wait 3s and start new game
+                await asyncio.sleep(3)
+                if get_setting('auto_dice', 'off') != 'on': continue
+                
+                # Unlock chat for betting
+                await unlock_chat(context.bot, GAME_GROUP_ID)
+                
+                game_id = create_game(GAME_GROUP_ID)
+                caption = (
+                    f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
+                    f"နံပါတ် ၁ မှ ၆ ထိ လောင်းနိုင်ပါသည်\n"
+                    f"တစ်ယောက် နှစ်ကြိမ်အထိ လောင်းနိုင်သည် (မတူသောနံပါတ်)\n"
+                    f"Min {MIN_BET:,}ကျပ် │ Max {MAX_BET:,}ကျပ်"
+                )
+                
+                custom_image = get_game_image('game_start')
+                try:
+                    if custom_image:
+                        await context.bot.send_photo(chat_id=GAME_GROUP_ID, photo=custom_image, caption=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
                     else:
-                        bet_text += "😢 လောင်းကြေးမရှိပါ"
+                        await context.bot.send_message(chat_id=GAME_GROUP_ID, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
+                except Exception as e:
+                    print(f"Error starting game in {GAME_GROUP_ID}: {e}")
+                continue
 
-                    custom_image = get_game_image('game_stop')
-                    try:
-                        if custom_image:
-                            await context.bot.send_photo(chat_id=group_id, photo=custom_image, caption=bet_text, parse_mode='Markdown', reply_markup=get_owner_button())
-                        else:
-                            await context.bot.send_message(chat_id=group_id, text=bet_text, parse_mode='Markdown', reply_markup=get_owner_button())
-
-                        await context.bot.send_message(chat_id=group_id, text="🤖 *Auto Dice Mode: ON*\nBot မှ အလိုအလျောက် အံစာတုံးလှည့်ပေးနေပါသည်...", parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
-                        await asyncio.sleep(2)
-                        
-                        # Send dice
-                        dice_msg = await context.bot.send_dice(chat_id=group_id)
-                        dice_value = dice_msg.dice.value
-                        
-                        # Process result
-                        await asyncio.sleep(4)
-                        winners, total_win_amount = update_bet_results(game_id, dice_value)
-                        total_bet_amount = game['total_bet_amount']
-                        owner_profit = total_bet_amount - total_win_amount
-                        close_game(game_id, dice_value, total_win_amount, owner_profit)
-
-                        result_text = (
-                            f"🎉 *ပွဲစဉ်ရလဒ်* — `{game_id}`\n"
-                            f"━━━━━━━━━━━━━\n"
-                            f"🎲 အံစာတုံး: *{dice_value}*\n"
-                            f"━━━━━━━━━━━━━\n\n"
-                        )
-
-                        if winners:
-                            for bet in winners:
-                                win_amount = bet[4] * dice_value
-                                user_info = get_user(bet[2])
-                                new_balance = update_balance(bet[2], win_amount, 'add')
-                                prev_balance = new_balance - win_amount
-                                result_text += (
-                                    f"🏆 {user_info['name']}\n"
-                                    f"   နံပါတ် {bet[3]} — {bet[4]:,} × {dice_value} = {win_amount:,} ကျပ်\n"
-                                    f"   💰 {prev_balance:,} + {win_amount:,} = {new_balance:,} ကျပ်\n\n"
-                                )
-                        else:
-                            result_text += "❌ အနိုင်ရသူမရှိပါ\n"
-
-                        custom_image = get_game_image('game_result')
-                        if custom_image:
-                            await context.bot.send_photo(chat_id=group_id, photo=custom_image, caption=result_text, parse_mode='Markdown', reply_markup=get_owner_button())
-                        else:
-                            await context.bot.send_message(chat_id=group_id, text=result_text, parse_mode='Markdown', reply_markup=get_owner_button())
-
-                        await context.bot.send_message(chat_id=group_id, text="🔚 ပွဲစဉ်ပြီးပါပြီ")
-                        
-                        try:
-                            owner_report = (
-                                f"📊 *ပွဲစဉ်အစီရင်ခံစာ*\n\n"
-                                f"Group: {group_title}\n"
-                                f"ပွဲစဉ်: `{game_id}`\n"
-                                f"အံစာတုံး: {dice_value}\n"
-                                f"စုစုပေါင်းလောင်းငွေ: {total_bet_amount:,} ကျပ်\n"
-                                f"အနိုင်ငွေပေးချေ: {total_win_amount:,} ကျပ်\n"
-                                f"အမြတ်: {owner_profit:,} ကျပ်"
-                            )
-                            await context.bot.send_message(chat_id=OWNER_ID, text=owner_report, parse_mode='Markdown')
-                        except: pass
-                    except Exception as e:
-                        print(f"Error processing game result in {group_id}: {e}")
-                    
-                    # Wait 3s before next cycle
-                    await asyncio.sleep(3)
+            # Game is open, check if anyone has bet
+            bets = get_game_bets(game['game_id'])
+            if bets:
+                # Someone bet, wait 30s then stop game
+                try:
+                    await context.bot.send_message(chat_id=GAME_GROUP_ID, text="⏳ လောင်းကြေးများ ရောက်ရှိလာပါပြီ။ နောက် ၃၀ စက္ကန့်အတွင်း ပွဲပိတ်ပါမည်။")
+                except: pass
+                await asyncio.sleep(30)
+                
+                # Stop game logic
+                game = get_current_game() # Re-fetch to be sure
+                if not game: continue
+                
+                # Lock chat when game stops
+                await lock_chat(context.bot, GAME_GROUP_ID)
+                
+                game_id = game['game_id']
+                bets = get_game_bets(game_id)
+                
+                bet_text = f"🎲 *ပွဲစဉ်* — `{game_id}`\n➖ လောင်းကြေးပိတ်ပြီ ➖\n\n"
+                if bets:
+                    total_bet = 0
+                    for bet in bets:
+                        bet_text += f"👤 {bet['user_name']} — နံပါတ် {bet['bet_number']} — {bet['amount']:,} ကျပ်\n"
+                        total_bet += bet['amount']
+                    bet_text += f"\n💵 စုစုပေါင်း: {total_bet:,} ကျပ်"
                 else:
-                    # No bets yet, wait a bit
-                    await asyncio.sleep(5)
-            await asyncio.sleep(2) # Short pause between group checks
+                    bet_text += "😢 လောင်းကြေးမရှိပါ"
+
+                custom_image = get_game_image('game_stop')
+                try:
+                    if custom_image:
+                        await context.bot.send_photo(chat_id=GAME_GROUP_ID, photo=custom_image, caption=bet_text, parse_mode='Markdown', reply_markup=get_owner_button())
+                    else:
+                        await context.bot.send_message(chat_id=GAME_GROUP_ID, text=bet_text, parse_mode='Markdown', reply_markup=get_owner_button())
+
+                    await context.bot.send_message(chat_id=GAME_GROUP_ID, text="🤖 *Auto Dice Mode: ON*\nBot မှ အလိုအလျောက် အံစာတုံးလှည့်ပေးနေပါသည်...", parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
+                    await asyncio.sleep(2)
+                    
+                    # Send dice
+                    dice_msg = await context.bot.send_dice(chat_id=GAME_GROUP_ID)
+                    dice_value = dice_msg.dice.value
+                    
+                    # Process result
+                    await asyncio.sleep(4)
+                    winners, total_win_amount = update_bet_results(game_id, dice_value)
+                    total_bet_amount = game['total_bet_amount']
+                    owner_profit = total_bet_amount - total_win_amount
+                    close_game(game_id, dice_value, total_win_amount, owner_profit)
+
+                    result_text = (
+                        f"🎉 *ပွဲစဉ်ရလဒ်* — `{game_id}`\n"
+                        f"━━━━━━━━━━━━━\n"
+                        f"🎲 အံစာတုံး: *{dice_value}*\n"
+                        f"━━━━━━━━━━━━━\n\n"
+                    )
+
+                    if winners:
+                        for bet in winners:
+                            win_amount = bet[4] * dice_value
+                            user_info = get_user(bet[2])
+                            new_balance = update_balance(bet[2], win_amount, 'add')
+                            prev_balance = new_balance - win_amount
+                            result_text += (
+                                f"🏆 {user_info['name']}\n"
+                                f"   နံပါတ် {bet[3]} — {bet[4]:,} × {dice_value} = {win_amount:,} ကျပ်\n"
+                                f"   💰 {prev_balance:,} + {win_amount:,} = {new_balance:,} ကျပ်\n\n"
+                            )
+                    else:
+                        result_text += "❌ အနိုင်ရသူမရှိပါ\n"
+
+                    custom_image = get_game_image('game_result')
+                    if custom_image:
+                        await context.bot.send_photo(chat_id=GAME_GROUP_ID, photo=custom_image, caption=result_text, parse_mode='Markdown', reply_markup=get_owner_button())
+                    else:
+                        await context.bot.send_message(chat_id=GAME_GROUP_ID, text=result_text, parse_mode='Markdown', reply_markup=get_owner_button())
+
+                    await context.bot.send_message(chat_id=GAME_GROUP_ID, text="🔚 ပွဲစဉ်ပြီးပါပြီ")
+                    
+                    try:
+                        owner_report = (
+                            f"📊 *ပွဲစဉ်အစီရင်ခံစာ*\n\n"
+                            f"ပွဲစဉ်: `{game_id}`\n"
+                            f"အံစာတုံး: {dice_value}\n"
+                            f"စုစုပေါင်းလောင်းငွေ: {total_bet_amount:,} ကျပ်\n"
+                            f"အနိုင်ငွေပေးချေ: {total_win_amount:,} ကျပ်\n"
+                            f"အမြတ်: {owner_profit:,} ကျပ်"
+                        )
+                        await context.bot.send_message(chat_id=OWNER_ID, text=owner_report, parse_mode='Markdown')
+                    except: pass
+                except Exception as e:
+                    print(f"Error processing game result: {e}")
+                
+                # Wait 3s before next cycle
+                await asyncio.sleep(3)
+            else:
+                # No bets yet, wait a bit
+                await asyncio.sleep(5)
+            await asyncio.sleep(2)
         except Exception as e:
             print(f"ERROR in auto_game_loop: {e}")
             await asyncio.sleep(10)
@@ -758,7 +704,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     create_or_update_user(user.id, user.full_name, mention)
 
     # GAME GROUP
-    if is_group_approved(chat.id):
+    if chat.id == GAME_GROUP_ID:
         if is_staff(user.id):
             label = "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*" if user.id == OWNER_ID else "🛡 *Admin ထိန်းချုပ်ခန်း*"
             keyboard = [
@@ -804,11 +750,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။\n\n"
-            "Group Management Commands:\n"
-            "/approve <group_id> - Group အသစ်ထည့်ရန်\n"
-            "/removegroup <group_id> - Group ဖယ်ရှားရန်\n"
-            "/listgroups - Approved groups စာရင်းကြည့်ရန်",
+            "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
@@ -966,22 +908,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Game control (in group)
     elif data in ['game_start', 'game_stop']:
-        # Ensure it's a group and it's approved
-        if not is_group_approved(chat_id):
-            await query.answer("ဤ Group သည် ခွင့်ပြုချက်မရသေးပါ", show_alert=True)
+        if chat_id != GAME_GROUP_ID:
+            await query.answer("ဤ Group တွင် အသုံးပြု၍မရပါ", show_alert=True)
             return
 
         await query.answer()
 
         if data == 'game_start':
-            if get_current_game(chat_id):
+            if get_current_game():
                 await query.message.reply_text("❌ ဂိမ်းအဖွင့်ရှိပြီးသားပါ")
                 return
 
             # Unlock chat when game starts
-            await unlock_chat(context.bot, chat_id)
+            await unlock_chat(context.bot, GAME_GROUP_ID)
 
-            game_id = create_game(chat_id)
+            game_id = create_game(GAME_GROUP_ID)
 
             caption = (
                 f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
@@ -994,7 +935,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 if custom_image:
                     await context.bot.send_photo(
-                        chat_id=chat_id,
+                        chat_id=GAME_GROUP_ID,
                         photo=custom_image,
                         caption=caption,
                         parse_mode='Markdown',
@@ -1002,23 +943,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 else:
                     await context.bot.send_message(
-                        chat_id=chat_id,
+                        chat_id=GAME_GROUP_ID,
                         text=caption,
                         parse_mode='Markdown',
                         reply_markup=get_user_game_keyboard()
                     )
             except Exception as e:
                 print(f"Error sending game start: {e}")
-                await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
+                await context.bot.send_message(chat_id=GAME_GROUP_ID, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
 
         elif data == 'game_stop':
-            game = get_current_game(chat_id)
+            game = get_current_game()
             if not game:
                 await query.message.reply_text("❌ ဂိမ်းမရှိပါ")
                 return
 
             # Lock chat when game stops
-            await lock_chat(context.bot, chat_id)
+            await lock_chat(context.bot, GAME_GROUP_ID)
 
             game_id = game['game_id']
             bets = get_game_bets(game_id)
@@ -1037,7 +978,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 if custom_image:
                     await context.bot.send_photo(
-                        chat_id=chat_id,
+                        chat_id=GAME_GROUP_ID,
                         photo=custom_image,
                         caption=bet_text,
                         parse_mode='Markdown',
@@ -1045,24 +986,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 else:
                     await context.bot.send_message(
-                        chat_id=chat_id,
+                        chat_id=GAME_GROUP_ID,
                         text=bet_text,
                         parse_mode='Markdown',
                         reply_markup=get_owner_button()
                     )
             except Exception as e:
                 print(f"Error sending game stop: {e}")
-                await context.bot.send_message(chat_id=chat_id, text=bet_text, parse_mode='Markdown', reply_markup=get_owner_button())
+                await context.bot.send_message(chat_id=GAME_GROUP_ID, text=bet_text, parse_mode='Markdown', reply_markup=get_owner_button())
 
             await context.bot.send_message(
-                chat_id=chat_id,
+                chat_id=GAME_GROUP_ID,
                 text="🎲 Owner — ကျေးဇူးပြု၍ အံစာတုံး ၁ တုံး ပို့ပေးပါ ⏳",
                 parse_mode='Markdown',
                 reply_markup=ReplyKeyboardRemove()
             )
 
-            context.bot_data[f'current_game_id_{chat_id}'] = game_id
-            context.bot_data[f'awaiting_dice_{chat_id}'] = True
+            context.bot_data[f'current_game_id_{GAME_GROUP_ID}'] = game_id
+            context.bot_data[f'awaiting_dice_{GAME_GROUP_ID}'] = True
 
 # ==================== MESSAGE HANDLER ====================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1103,8 +1044,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     # ===== GAME GROUP =====
-    if is_group_approved(chat.id):
-        game = get_current_game(chat.id)
+    if chat.id == GAME_GROUP_ID:
+        game = get_current_game()
 
         # ===== KEYBOARD BUTTON ACTIONS =====
         if text == "👤 Profile":
@@ -1249,7 +1190,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                     return
                 except ValueError:
-                    pass # Not a valid number, let it fall through or ignore
+                    pass
 
         # ===== BETTING — no need to reply to bot, any message in group =====
         if not game or game['status'] != 'open':
@@ -1325,7 +1266,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     chat_id = chat.id
 
-    if not is_group_approved(chat_id):
+    if chat_id != GAME_GROUP_ID:
         return
     if not is_staff(user.id) or not update.message.dice:
         return
@@ -1339,9 +1280,9 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Process result
     winners, total_win_amount = update_bet_results(game_id, dice_value)
-    game = get_current_game(chat_id)
+    game = get_current_game()
     if not game:
-        game = {'total_bet_amount': 0} # Should not happen
+        game = {'total_bet_amount': 0}
 
     total_bet_amount = game.get('total_bet_amount', 0)
     owner_profit = total_bet_amount - total_win_amount
@@ -1379,10 +1320,8 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Report to owner
     try:
-        group_title = chat.title
         owner_report = (
             f"📊 *ပွဲစဉ်အစီရင်ခံစာ*\n\n"
-            f"Group: {group_title}\n"
             f"ပွဲစဉ်: `{game_id}`\n"
             f"အံစာတုံး: {dice_value}\n"
             f"စုစုပေါင်းလောင်းငွေ: {total_bet_amount:,} ကျပ်\n"
@@ -1433,50 +1372,6 @@ async def listadmins_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     text = "📋 *Admins စာရင်း*\n\n"
     for i, row in enumerate(admins, 1):
-        text += f"{i}. {row[1]} — `{row[0]}`\n"
-    await update.message.reply_text(text, parse_mode='Markdown')
-
-async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id != OWNER_ID:
-        return
-    if not context.args:
-        await update.message.reply_text("❌ Group ID ထည့်ပါ။\nသုံးနည်း: `/approve -100123456789`", parse_mode='Markdown')
-        return
-    try:
-        group_id = int(context.args[0])
-        title = " ".join(context.args[1:]) if len(context.args) > 1 else f"Group {group_id}"
-        approve_group(group_id, title)
-        await update.message.reply_text(f"✅ Group Approved: `{title}` ({group_id})", parse_mode='Markdown')
-    except ValueError:
-        await update.message.reply_text("❌ Group ID သည် ဂဏန်းဖြစ်ရပါမည်။")
-
-async def remove_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id != OWNER_ID:
-        return
-    if not context.args:
-        await update.message.reply_text("❌ Group ID ထည့်ပါ။\nသုံးနည်း: `/removegroup -100123456789`", parse_mode='Markdown')
-        return
-    try:
-        group_id = int(context.args[0])
-        if remove_group(group_id):
-            await update.message.reply_text(f"✅ Group Removed: `{group_id}`", parse_mode='Markdown')
-        else:
-            await update.message.reply_text(f"❌ Group `{group_id}` ကို စာရင်းထဲတွင် မတွေ့ပါ။", parse_mode='Markdown')
-    except ValueError:
-        await update.message.reply_text("❌ Group ID သည် ဂဏန်းဖြစ်ရပါမည်။")
-
-async def list_groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id != OWNER_ID:
-        return
-    groups = get_approved_groups()
-    if not groups:
-        await update.message.reply_text("📋 Approved group မရှိသေးပါ။")
-        return
-    text = "📋 *Approved Groups စာရင်း*\n\n"
-    for i, row in enumerate(groups, 1):
         text += f"{i}. {row[1]} — `{row[0]}`\n"
     await update.message.reply_text(text, parse_mode='Markdown')
 
@@ -1575,9 +1470,6 @@ def main():
     app.add_handler(CommandHandler("addadmin", addadmin_command))
     app.add_handler(CommandHandler("removeadmin", removeadmin_command))
     app.add_handler(CommandHandler("listadmins", listadmins_command))
-    app.add_handler(CommandHandler("approve", approve_command))
-    app.add_handler(CommandHandler("removegroup", remove_group_command))
-    app.add_handler(CommandHandler("listgroups", list_groups_command))
     app.add_handler(CommandHandler("mmk", mmk_command))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -1591,6 +1483,7 @@ def main():
     print("=" * 50)
     print("🎲 DICE GAME BOT STARTED")
     print(f"👑 OWNER: {OWNER_ID}")
+    print(f"🎮 GROUP: {GAME_GROUP_ID}")
     print("=" * 50)
 
     app.run_polling(drop_pending_updates=True)
