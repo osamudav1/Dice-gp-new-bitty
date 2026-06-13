@@ -395,8 +395,7 @@ def create_backup():
             'id': game[0], 'game_id': game[1], 'status': game[2],
             'result_number': game[3], 'total_bet_amount': game[4],
             'total_win_amount': game[5], 'owner_profit': game[6],
-            'created_at': str(game[7]),
-            'closed_at': str(game[8]) if game[8] else None
+            'created_at': str(game[7]), 'closed_at': str(game[8])
         })
     c.execute("SELECT * FROM bets")
     for bet in c.fetchall():
@@ -407,45 +406,44 @@ def create_backup():
         })
     conn.close()
     filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(backup_data, f, ensure_ascii=False, indent=2)
+    with open(filename, 'w') as f:
+        json.dump(backup_data, f, indent=4)
     return filename
 
-def restore_backup(file_path):
-    with open(file_path, 'r', encoding='utf-8') as f:
-        backup_data = json.load(f)
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("DELETE FROM bets")
-    c.execute("DELETE FROM games")
-    c.execute("DELETE FROM users")
-    for user in backup_data['users']:
-        c.execute(f"INSERT INTO users (user_id, name, mention, total_bet, total_win, balance) VALUES ({Q(6)})",
-                  (user['user_id'], user['name'], user['mention'], user['total_bet'], user['total_win'], user['balance']))
-    for game in backup_data['games']:
-        c.execute(f"INSERT INTO games (id, game_id, status, result_number, total_bet_amount, total_win_amount, owner_profit, created_at, closed_at) VALUES ({Q(9)})",
-                  (game['id'], game['game_id'], game['status'], game['result_number'], game['total_bet_amount'], game['total_win_amount'], game['owner_profit'], game['created_at'], game['closed_at']))
-    for bet in backup_data['bets']:
-        c.execute(f"INSERT INTO bets (id, game_id, user_id, bet_number, amount, status, win_amount, timestamp) VALUES ({Q(8)})",
-                  (bet['id'], bet['game_id'], bet['user_id'], bet['bet_number'], bet['amount'], bet['status'], bet['win_amount'], bet['timestamp']))
-    conn.commit()
-    conn.close()
-    return True, f"Restored {len(backup_data['users'])} users, {len(backup_data['games'])} games, {len(backup_data['bets'])} bets"
+def restore_backup(filename):
+    try:
+        with open(filename, 'r') as f:
+            data = json.load(f)
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("DELETE FROM users")
+        for u in data['users']:
+            c.execute(f"INSERT INTO users (user_id, name, mention, total_bet, total_win, balance) VALUES ({Q(6)})",
+                      (u['user_id'], u['name'], u['mention'], u['total_bet'], u['total_win'], u['balance']))
+        c.execute("DELETE FROM games")
+        for g in data['games']:
+            c.execute(f"INSERT INTO games (id, game_id, status, result_number, total_bet_amount, total_win_amount, owner_profit, created_at, closed_at) VALUES ({Q(9)})",
+                      (g['id'], g['game_id'], g['status'], g['result_number'], g['total_bet_amount'], g['total_win_amount'], g['owner_profit'], g['created_at'], g['closed_at']))
+        c.execute("DELETE FROM bets")
+        for b in data['bets']:
+            c.execute(f"INSERT INTO bets (id, game_id, user_id, bet_number, amount, status, win_amount, timestamp) VALUES ({Q(8)})",
+                      (b['id'], b['game_id'], b['user_id'], b['bet_number'], b['amount'], b['status'], b['win_amount'], b['timestamp']))
+        conn.commit()
+        conn.close()
+        return True, "Restore Successful"
+    except Exception as e:
+        return False, str(e)
 
 # ==================== ADMIN FUNCTIONS ====================
 def add_admin(user_id, name):
     conn = get_conn()
     c = conn.cursor()
     if USE_PG:
-        c.execute(
-            f"INSERT INTO admins (user_id, name, added_at) VALUES ({Q(3)}) ON CONFLICT (user_id) DO UPDATE SET name = EXCLUDED.name",
-            (user_id, name, datetime.now())
-        )
+        c.execute(f"INSERT INTO admins (user_id, name, added_at) VALUES ({Q(3)}) ON CONFLICT (user_id) DO UPDATE SET name = EXCLUDED.name",
+                  (user_id, name, datetime.now()))
     else:
-        c.execute(
-            f"INSERT OR REPLACE INTO admins (user_id, name, added_at) VALUES ({Q(3)})",
-            (user_id, name, datetime.now())
-        )
+        c.execute(f"INSERT OR REPLACE INTO admins (user_id, name, added_at) VALUES ({Q(3)})",
+                  (user_id, name, datetime.now()))
     conn.commit()
     conn.close()
 
@@ -497,7 +495,6 @@ def get_owner_button():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-
 def get_user_game_keyboard():
     keyboard = [
         [
@@ -507,6 +504,132 @@ def get_user_game_keyboard():
         ]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
+
+# ==================== AUTO MODE LOGIC ====================
+async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
+    while True:
+        try:
+            auto_dice = get_setting('auto_dice', 'off')
+            if auto_dice != 'on':
+                await asyncio.sleep(5)
+                continue
+
+            game = get_current_game()
+            if not game:
+                # No game running, wait 3s and start new game
+                await asyncio.sleep(3)
+                if get_setting('auto_dice', 'off') != 'on': continue
+                
+                game_id = create_game()
+                caption = (
+                    f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
+                    f"နံပါတ် ၁ မှ ၆ ထိ လောင်းနိုင်ပါသည်\n"
+                    f"တစ်ယောက် နှစ်ကြိမ်အထိ လောင်းနိုင်သည် (မတူသောနံပါတ်)\n"
+                    f"Min {MIN_BET:,}ကျပ် │ Max {MAX_BET:,}ကျပ်"
+                )
+                
+                custom_image = get_game_image('game_start')
+                if custom_image:
+                    await context.bot.send_photo(chat_id=GAME_GROUP_ID, photo=custom_image, caption=caption, parse_mode='Markdown', reply_markup=get_owner_button())
+                else:
+                    await context.bot.send_message(chat_id=GAME_GROUP_ID, text=caption, parse_mode='Markdown', reply_markup=get_owner_button())
+                
+                await context.bot.send_message(chat_id=GAME_GROUP_ID, text="〰️", reply_markup=get_user_game_keyboard())
+                continue
+
+            # Game is open, check if anyone has bet
+            bets = get_game_bets(game['game_id'])
+            if bets:
+                # Someone bet, wait 30s then stop game
+                await context.bot.send_message(chat_id=GAME_GROUP_ID, text="⏳ လောင်းကြေးများ ရောက်ရှိလာပါပြီ။ နောက် ၃၀ စက္ကန့်အတွင်း ပွဲပိတ်ပါမည်။")
+                await asyncio.sleep(30)
+                
+                # Stop game logic
+                game = get_current_game() # Re-fetch to be sure
+                if not game: continue
+                
+                game_id = game['game_id']
+                bets = get_game_bets(game_id)
+                
+                bet_text = f"🎲 *ပွဲစဉ်* — `{game_id}`\n➖ လောင်းကြေးပိတ်ပြီ ➖\n\n"
+                if bets:
+                    total_bet = 0
+                    for bet in bets:
+                        bet_text += f"👤 {bet['user_name']} — နံပါတ် {bet['bet_number']} — {bet['amount']:,} ကျပ်\n"
+                        total_bet += bet['amount']
+                    bet_text += f"\n💵 စုစုပေါင်း: {total_bet:,} ကျပ်"
+                else:
+                    bet_text += "😢 လောင်းကြေးမရှိပါ"
+
+                custom_image = get_game_image('game_stop')
+                if custom_image:
+                    await context.bot.send_photo(chat_id=GAME_GROUP_ID, photo=custom_image, caption=bet_text, parse_mode='Markdown', reply_markup=get_owner_button())
+                else:
+                    await context.bot.send_message(chat_id=GAME_GROUP_ID, text=bet_text, parse_mode='Markdown', reply_markup=get_owner_button())
+
+                await context.bot.send_message(chat_id=GAME_GROUP_ID, text="🤖 *Auto Dice Mode: ON*\nBot မှ အလိုအလျောက် အံစာတုံးလှည့်ပေးနေပါသည်...", parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
+                await asyncio.sleep(2)
+                
+                # Send dice
+                dice_msg = await context.bot.send_dice(chat_id=GAME_GROUP_ID)
+                dice_value = dice_msg.dice.value
+                
+                # Process result
+                await asyncio.sleep(4)
+                winners, total_win_amount = update_bet_results(game_id, dice_value)
+                total_bet_amount = game['total_bet_amount']
+                owner_profit = total_bet_amount - total_win_amount
+                close_game(game_id, dice_value, total_win_amount, owner_profit)
+
+                result_text = (
+                    f"🎉 *ပွဲစဉ်ရလဒ်* — `{game_id}`\n"
+                    f"━━━━━━━━━━━━━\n"
+                    f"🎲 အံစာတုံး: *{dice_value}*\n"
+                    f"━━━━━━━━━━━━━\n\n"
+                )
+
+                if winners:
+                    for bet in winners:
+                        win_amount = bet[4] * dice_value
+                        user_info = get_user(bet[2])
+                        new_balance = update_balance(bet[2], win_amount, 'add')
+                        prev_balance = new_balance - win_amount
+                        result_text += (
+                            f"🏆 {user_info['name']}\n"
+                            f"   နံပါတ် {bet[3]} — {bet[4]:,} × {dice_value} = {win_amount:,} ကျပ်\n"
+                            f"   💰 {prev_balance:,} + {win_amount:,} = {new_balance:,} ကျပ်\n\n"
+                        )
+                else:
+                    result_text += "❌ အနိုင်ရသူမရှိပါ\n"
+
+                custom_image = get_game_image('game_result')
+                if custom_image:
+                    await context.bot.send_photo(chat_id=GAME_GROUP_ID, photo=custom_image, caption=result_text, parse_mode='Markdown', reply_markup=get_owner_button())
+                else:
+                    await context.bot.send_message(chat_id=GAME_GROUP_ID, text=result_text, parse_mode='Markdown', reply_markup=get_owner_button())
+
+                await context.bot.send_message(chat_id=GAME_GROUP_ID, text="🔚 ပွဲစဉ်ပြီးပါပြီ")
+                
+                try:
+                    owner_report = (
+                        f"📊 *ပွဲစဉ်အစီရင်ခံစာ*\n\n"
+                        f"ပွဲစဉ်: `{game_id}`\n"
+                        f"အံစာတုံး: {dice_value}\n"
+                        f"စုစုပေါင်းလောင်းငွေ: {total_bet_amount:,} ကျပ်\n"
+                        f"အနိုင်ငွေပေးချေ: {total_win_amount:,} ကျပ်\n"
+                        f"အမြတ်: {owner_profit:,} ကျပ်"
+                    )
+                    await context.bot.send_message(chat_id=OWNER_ID, text=owner_report, parse_mode='Markdown')
+                except: pass
+                
+                # Wait 3s before next cycle
+                await asyncio.sleep(3)
+            else:
+                # No bets yet, wait a bit
+                await asyncio.sleep(5)
+        except Exception as e:
+            print(f"ERROR in auto_game_loop: {e}")
+            await asyncio.sleep(10)
 
 # ==================== COMMAND HANDLERS ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -806,17 +929,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             context.bot_data['current_game_id'] = game_id
             context.bot_data['awaiting_dice'] = True
-
-            # AUTO DICE LOGIC
-            if get_setting('auto_dice', 'off') == 'on':
-                await asyncio.sleep(2)
-                await context.bot.send_message(
-                    chat_id=GAME_GROUP_ID,
-                    text="🤖 *Auto Dice Mode: ON*\nBot မှ အလိုအလျောက် အံစာတုံးလှည့်ပေးနေပါသည်...",
-                    parse_mode='Markdown'
-                )
-                await asyncio.sleep(1)
-                await context.bot.send_dice(chat_id=GAME_GROUP_ID)
 
 # ==================== MESSAGE HANDLER ====================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1272,9 +1384,12 @@ def run_health_server():
     server.serve_forever()
 
 # ==================== MAIN ====================
+async def post_init(application: Application):
+    asyncio.create_task(auto_game_loop(application))
+
 def main():
     init_db()
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("addadmin", addadmin_command))
     app.add_handler(CommandHandler("removeadmin", removeadmin_command))
