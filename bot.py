@@ -285,6 +285,25 @@ def get_user(user_id):
         }
     return None
 
+def get_user_by_username(username):
+    if not username.startswith('@'):
+        username = '@' + username
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(f"SELECT * FROM users WHERE mention = {q()}", (username,))
+    user = c.fetchone()
+    conn.close()
+    if user:
+        return {
+            'user_id': user[0],
+            'name': user[1],
+            'mention': user[2],
+            'total_bet': user[3],
+            'total_win': user[4],
+            'balance': user[5]
+        }
+    return None
+
 def create_or_update_user(user_id, name, mention):
     conn = get_conn()
     c = conn.cursor()
@@ -1152,72 +1171,73 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # Owner deposit/withdraw (must reply to a message)
-        if user.id == OWNER_ID and update.message.reply_to_message:
-            replied = update.message.reply_to_message
-            target_user = replied.from_user
-            target_user_id = target_user.id
+        if is_staff(user.id) and update.message.reply_to_message:
+            if text.startswith('+') or text.startswith('-'):
+                replied = update.message.reply_to_message
+                target_user = replied.from_user
+                target_user_id = target_user.id
 
-            if target_user.id == context.bot.id:
-                match = re.search(r'ID.*?`?(\d+)`?', replied.text or "")
-                if match:
-                    target_user_id = int(match.group(1))
+                # If replying to bot's profile message, extract ID
+                if target_user.id == context.bot.id:
+                    match = re.search(r'🆔\s*`?(\d+)`?', replied.text or "")
+                    if match:
+                        target_user_id = int(match.group(1))
 
-            user_data = get_user(target_user_id)
-            if not user_data:
-                await update.message.reply_text("❌ User ID မတွေ့ပါ။ User က /start လုပ်ထားဖို့လိုပါသည်။")
-                return
+                user_data = get_user(target_user_id)
+                if not user_data:
+                    await update.message.reply_text("❌ User ID မတွေ့ပါ။ User က /start လုပ်ထားဖို့လိုပါသည်။")
+                    return
 
-            if text.startswith('+'):
                 try:
-                    amount = int(text[1:])
-                    prev_balance = user_data['balance']
-                    new_balance = update_balance(target_user_id, amount, 'add')
-                    try:
-                        await context.bot.send_message(
-                            chat_id=target_user_id,
-                            text=f"✅ *ငွေသွင်းပြီးပါပြီ*\n\n"
-                                 f"👤 {user_data['name']}\n"
-                                 f"🆔 `{target_user_id}`\n"
-                                 f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
-                                 f"💰 ထည့်ငွေ: +{amount:,} ကျပ်\n"
-                                 f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
-                            parse_mode='Markdown'
+                    amount_str = text[1:].strip()
+                    if not amount_str.isdigit():
+                        return # Not a balance update message
+                    
+                    amount = int(amount_str)
+                    if text.startswith('+'):
+                        prev_balance = user_data['balance']
+                        new_balance = update_balance(target_user_id, amount, 'add')
+                        try:
+                            await context.bot.send_message(
+                                chat_id=target_user_id,
+                                text=f"✅ *ငွေသွင်းပြီးပါပြီ*\n\n"
+                                     f"👤 {user_data['name']}\n"
+                                     f"🆔 `{target_user_id}`\n"
+                                     f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
+                                     f"💰 ထည့်ငွေ: +{amount:,} ကျပ်\n"
+                                     f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
+                                parse_mode='Markdown'
+                            )
+                        except:
+                            pass
+                        await update.message.reply_text(
+                            f"✅ {user_data['mention']} ထံ {amount:,} ကျပ် ထည့်ပြီးပါပြီ"
                         )
-                    except:
-                        pass
-                    await update.message.reply_text(
-                        f"✅ {user_data['mention']} ထံ {amount:,} ကျပ် ထည့်ပြီးပါပြီ"
-                    )
-                except ValueError:
-                    await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းထည့်ပါ")
-
-            elif text.startswith('-'):
-                try:
-                    amount = int(text[1:])
-                    if user_data['balance'] < amount:
-                        await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
-                        return
-                    prev_balance = user_data['balance']
-                    new_balance = update_balance(target_user_id, amount, 'subtract')
-                    try:
-                        await context.bot.send_message(
-                            chat_id=target_user_id,
-                            text=f"✅ *ငွေထုတ်ပြီးပါပြီ*\n\n"
-                                 f"👤 {user_data['name']}\n"
-                                 f"🆔 `{target_user_id}`\n"
-                                 f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
-                                 f"💸 ထုတ်ငွေ: -{amount:,} ကျပ်\n"
-                                 f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
-                            parse_mode='Markdown'
+                    else: # Starts with '-'
+                        if user_data['balance'] < amount:
+                            await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
+                            return
+                        prev_balance = user_data['balance']
+                        new_balance = update_balance(target_user_id, amount, 'subtract')
+                        try:
+                            await context.bot.send_message(
+                                chat_id=target_user_id,
+                                text=f"✅ *ငွေထုတ်ပြီးပါပြီ*\n\n"
+                                     f"👤 {user_data['name']}\n"
+                                     f"🆔 `{target_user_id}`\n"
+                                     f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
+                                     f"💸 ထုတ်ငွေ: -{amount:,} ကျပ်\n"
+                                     f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
+                                parse_mode='Markdown'
+                            )
+                        except:
+                            pass
+                        await update.message.reply_text(
+                            f"✅ {user_data['name']} ထံမှ {amount:,} ကျပ် ထုတ်ပြီးပါပြီ"
                         )
-                    except:
-                        pass
-                    await update.message.reply_text(
-                        f"✅ {user_data['name']} ထံမှ {amount:,} ကျပ် ထုတ်ပြီးပါပြီ"
-                    )
+                    return
                 except ValueError:
-                    await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းထည့်ပါ")
-            return
+                    pass # Not a valid number, let it fall through or ignore
 
         # ===== BETTING — no need to reply to bot, any message in group =====
         if not game or game['status'] != 'open':
@@ -1517,6 +1537,74 @@ async def list_groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         text += f"{i}. {row[1]} — `{row[0]}`\n"
     await update.message.reply_text(text, parse_mode='Markdown')
 
+async def mmk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_staff(user.id):
+        return
+
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("❌ သုံးနည်း: `/mmk [user id/username] [+-amount]`\nဥပမာ: `/mmk 123456789 +5000` သို့မဟုတ် `/mmk @username -2000`", parse_mode='Markdown')
+        return
+
+    target_input = context.args[0]
+    amount_input = context.args[1]
+
+    # Find user
+    user_data = None
+    if target_input.isdigit():
+        user_data = get_user(target_input)
+    else:
+        user_data = get_user_by_username(target_input)
+
+    if not user_data:
+        await update.message.reply_text(f"❌ User `{target_input}` ကို မတွေ့ပါ။ User က /start လုပ်ထားဖို့လိုပါသည်။", parse_mode='Markdown')
+        return
+
+    target_user_id = user_data['user_id']
+    
+    try:
+        if amount_input.startswith('+'):
+            amount = int(amount_input[1:])
+            prev_balance = user_data['balance']
+            new_balance = update_balance(target_user_id, amount, 'add')
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text=f"✅ *ငွေသွင်းပြီးပါပြီ*\n\n"
+                         f"👤 {user_data['name']}\n"
+                         f"🆔 `{target_user_id}`\n"
+                         f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
+                         f"💰 ထည့်ငွေ: +{amount:,} ကျပ်\n"
+                         f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
+                    parse_mode='Markdown'
+                )
+            except: pass
+            await update.message.reply_text(f"✅ {user_data['mention']} ထံ {amount:,} ကျပ် ထည့်ပြီးပါပြီ")
+        elif amount_input.startswith('-'):
+            amount = int(amount_input[1:])
+            if user_data['balance'] < amount:
+                await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
+                return
+            prev_balance = user_data['balance']
+            new_balance = update_balance(target_user_id, amount, 'subtract')
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text=f"✅ *ငွေထုတ်ပြီးပါပြီ*\n\n"
+                         f"👤 {user_data['name']}\n"
+                         f"🆔 `{target_user_id}`\n"
+                         f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
+                         f"💸 ထုတ်ငွေ: -{amount:,} ကျပ်\n"
+                         f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
+                    parse_mode='Markdown'
+                )
+            except: pass
+            await update.message.reply_text(f"✅ {user_data['name']} ထံမှ {amount:,} ကျပ် ထုတ်ပြီးပါပြီ")
+        else:
+            await update.message.reply_text("❌ ငွေပမာဏ ရှေ့တွင် + သို့မဟုတ် - ထည့်ပါ။\nဥပမာ: `+5000` သို့မဟုတ် `-2000`", parse_mode='Markdown')
+    except ValueError:
+        await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းဖြစ်ရပါမည်။")
+
 # ==================== HEALTH CHECK SERVER ====================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1547,6 +1635,7 @@ def main():
     app.add_handler(CommandHandler("approve", approve_command))
     app.add_handler(CommandHandler("removegroup", remove_group_command))
     app.add_handler(CommandHandler("listgroups", list_groups_command))
+    app.add_handler(CommandHandler("mmk", mmk_command))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.Dice.ALL, handle_dice))
