@@ -1375,6 +1375,9 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game_id = context.bot_data.get(f'current_game_id_{chat_id}')
     print(f"🎲 DICE: {dice_value} for {game_id}")
 
+    # Wait for dice animation to finish before showing result (~4 seconds)
+    await asyncio.sleep(4)
+
     # Process result
     winners, total_win_amount = update_bet_results(game_id, dice_value)
     game = get_current_game()
