@@ -618,10 +618,9 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                     custom_image = get_game_image('game_start')
                     try:
                         if custom_image:
-                            await context.bot.send_photo(chat_id=group_id, photo=custom_image, caption=caption, parse_mode='Markdown', reply_markup=get_owner_button())
+                            await context.bot.send_photo(chat_id=group_id, photo=custom_image, caption=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
                         else:
-                            await context.bot.send_message(chat_id=group_id, text=caption, parse_mode='Markdown', reply_markup=get_owner_button())
-                        await context.bot.send_message(chat_id=group_id, text="〰️", reply_markup=get_user_game_keyboard())
+                            await context.bot.send_message(chat_id=group_id, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
                     except Exception as e:
                         print(f"Error starting game in {group_id}: {e}")
                     continue
@@ -760,9 +759,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🎲 *ကစားနည်း*\n\n"
                 "နံပါတ် ရွေးပြီး လောင်းကြေးတင်ပါ\n"
                 "`1 500` ` 2 200` ` 3 50`\n\n"
-                f"〰️ အနည်းဆုံး {MIN_BET:,}ကျပ်  အများဆုံး {MAX_BET:,}ကျပ်\n"
-                "〰️ တစ်ယောက် တစ်ခါသာ လောင်းနိုင်သည်\n"
-                "〰️ Group တွင် တိုက်ရိုက်ရိုက်ပို့နိုင်သည်"
+                f"💰 အနည်းဆုံး {MIN_BET:,}ကျပ်  အများဆုံး {MAX_BET:,}ကျပ်\n"
+                "📌 တစ်ယောက် တစ်ခါသာ လောင်းနိုင်သည်\n"
+                "💬 Group တွင် တိုက်ရိုက်ရိုက်ပို့နိုင်သည်"
             )
             await update.message.reply_text(
                 text=text,
@@ -975,21 +974,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     photo=custom_image,
                     caption=caption,
                     parse_mode='Markdown',
-                    reply_markup=get_owner_button()
+                    reply_markup=get_user_game_keyboard()
                 )
             else:
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=caption,
                     parse_mode='Markdown',
-                    reply_markup=get_owner_button()
+                    reply_markup=get_user_game_keyboard()
                 )
-
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="〰️",
-                reply_markup=get_user_game_keyboard()
-            )
 
         elif data == 'game_stop':
             game = get_current_game(chat_id)
@@ -1147,8 +1140,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "`1 500` — နံပါတ် 1 ကို 500 ကျပ်\n"
                 "`3 200` — နံပါတ် 3 ကို 200 ကျပ်\n"
                 "`6 50`  — နံပါတ် 6 ကို 50 ကျပ်\n\n"
-                f"〰️ Min: {MIN_BET:,} ကျပ် │ Max: {MAX_BET:,} ကျပ်\n"
-                "〰️ တစ်ပွဲ နှစ်ကြိမ်အထိ (မတူသောနံပါတ်) လောင်းနိုင်သည်\n\n"
+                f"💰 Min: {MIN_BET:,} ကျပ် │ Max: {MAX_BET:,} ကျပ်\n"
+                "📌 တစ်ပွဲ နှစ်ကြိမ်အထိ (မတူသောနံပါတ်) လောင်းနိုင်သည်\n\n"
                 "⏱ ဤစာ 10 စက္ကန့်အတွင်း ပျောက်သွားမည်",
                 parse_mode='Markdown',
                 do_quote=True
