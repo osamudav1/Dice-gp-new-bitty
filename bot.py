@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageFont
 import io
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, ChatPermissions
 from telegram.constants import KeyboardButtonStyle
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
@@ -178,6 +178,35 @@ def get_approved_groups():
     rows = c.fetchall()
     conn.close()
     return rows
+
+# ==================== CHAT PERMISSION FUNCTIONS ====================
+async def lock_chat(bot, chat_id):
+    try:
+        permissions = ChatPermissions(can_send_messages=False)
+        await bot.set_chat_permissions(chat_id=chat_id, permissions=permissions)
+    except Exception as e:
+        print(f"Error locking chat {chat_id}: {e}")
+
+async def unlock_chat(bot, chat_id):
+    try:
+        permissions = ChatPermissions(
+            can_send_messages=True,
+            can_send_audios=True,
+            can_send_documents=True,
+            can_send_photos=True,
+            can_send_videos=True,
+            can_send_video_notes=True,
+            can_send_voice_notes=True,
+            can_send_polls=True,
+            can_send_other_messages=True,
+            can_add_web_page_previews=True,
+            can_change_info=False,
+            can_invite_users=True,
+            can_pin_messages=False
+        )
+        await bot.set_chat_permissions(chat_id=chat_id, permissions=permissions)
+    except Exception as e:
+        print(f"Error unlocking chat {chat_id}: {e}")
 
 # ==================== IMAGE FUNCTIONS ====================
 def save_game_image(image_type, photo_id, updated_by):
@@ -575,6 +604,9 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                     await asyncio.sleep(3)
                     if get_setting('auto_dice', 'off') != 'on': continue
                     
+                    # Unlock chat for betting
+                    await unlock_chat(context.bot, group_id)
+                    
                     game_id = create_game(group_id)
                     caption = (
                         f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
@@ -606,6 +638,9 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                     # Stop game logic
                     game = get_current_game(group_id) # Re-fetch to be sure
                     if not game: continue
+                    
+                    # Lock chat when game stops
+                    await lock_chat(context.bot, group_id)
                     
                     game_id = game['game_id']
                     bets = get_game_bets(game_id)
@@ -755,7 +790,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။\n\n"
             "Group Management Commands:\n"
             "/approve <group_id> - Group အသစ်ထည့်ရန်\n"
-            "/remove <group_id> - Group ဖယ်ရှားရန်\n"
+            "/removegroup <group_id> - Group ဖယ်ရှားရန်\n"
             "/listgroups - Approved groups စာရင်းကြည့်ရန်",
             reply_markup=reply_markup,
             parse_mode='Markdown'
@@ -921,6 +956,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.message.reply_text("❌ ဂိမ်းအဖွင့်ရှိပြီးသားပါ")
                 return
 
+            # Unlock chat when game starts
+            await unlock_chat(context.bot, chat_id)
+
             game_id = create_game(chat_id)
 
             caption = (
@@ -958,6 +996,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not game:
                 await query.message.reply_text("❌ ဂိမ်းမရှိပါ")
                 return
+
+            # Lock chat when game stops
+            await lock_chat(context.bot, chat_id)
 
             game_id = game['game_id']
             bets = get_game_bets(game_id)
@@ -1036,7 +1077,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("❌ ပုံကိုသာ ပို့ပါ။")
             return
-        # return - don't return here, let commands process
 
     # ===== GAME GROUP =====
     if is_group_approved(chat.id):
