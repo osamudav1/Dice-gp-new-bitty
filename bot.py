@@ -857,28 +857,59 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
         
         # We handle query.answer() inside each condition to avoid double answering
         if data == 'game_start':
-            if get_current_game():
-                await query.answer("❌ ဂိမ်းအဖွင့်ရှိပြီးသားပါ။ /resetgame သုံးပါ", show_alert=True)
-                return
-            
-            await query.answer()
-            await unlock_chat(context.bot, chat_id)
-            game_id = create_game(chat_id)
-            caption = (
-                f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
-                f"နံပါတ် ၁ မှ ၆ ထိ လောင်းနိုင်ပါသည်\n"
-                f"တစ်ယောက် နှစ်ကြိမ်အထိ လောင်းနိုင်သည် (မတူသောနံပါတ်)\n"
-                f"Min {MIN_BET:,}ကျပ် │ Max {MAX_BET:,}ကျပ်"
-            )
-            custom_image = get_game_image('game_start')
             try:
-                if custom_image:
-                    await context.bot.send_photo(chat_id=chat_id, photo=custom_image, caption=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
-                else:
-                    await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
+                if get_current_game():
+                    await query.answer("❌ ဂိမ်းအဖွင့်ရှိပြီးသားပါ။ /resetgame သုံးပါ", show_alert=True)
+                    return
+                
+                await query.answer("ဂိမ်းစတင်နေပါပြီ...")
+                
+                # Update GAME_GROUP_ID dynamically if needed
+                global GAME_GROUP_ID
+                if chat_id != OWNER_ID:
+                    GAME_GROUP_ID = chat_id
+                
+                await unlock_chat(context.bot, chat_id)
+                game_id = create_game(chat_id)
+                
+                caption = (
+                    f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
+                    f"နံပါတ် ၁ မှ ၆ ထိ လောင်းနိုင်ပါသည်\n"
+                    f"တစ်ယောက် နှစ်ကြိမ်အထိ လောင်းနိုင်သည် (မတူသောနံပါတ်)\n"
+                    f"Min {MIN_BET:,}ကျပ် │ Max {MAX_BET:,}ကျပ်"
+                )
+                
+                custom_image = get_game_image('game_start')
+                reply_markup = get_user_game_keyboard()
+                
+                try:
+                    if custom_image:
+                        await context.bot.send_photo(
+                            chat_id=chat_id, 
+                            photo=custom_image, 
+                            caption=caption, 
+                            parse_mode='Markdown', 
+                            reply_markup=reply_markup
+                        )
+                    else:
+                        await context.bot.send_message(
+                            chat_id=chat_id, 
+                            text=caption, 
+                            parse_mode='Markdown', 
+                            reply_markup=reply_markup
+                        )
+                except Exception as e:
+                    print(f"Error sending game start message: {e}")
+                    await context.bot.send_message(
+                        chat_id=chat_id, 
+                        text=caption, 
+                        parse_mode='Markdown', 
+                        reply_markup=reply_markup
+                    )
             except Exception as e:
-                print(f"Error sending game start: {e}")
-                await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
+                print(f"CRITICAL ERROR in game_start: {e}")
+                import traceback; traceback.print_exc()
+                await query.message.reply_text(f"❌ ဂိမ်းစတင်ရန် အမှားအယွင်းရှိနေပါသည်: {str(e)}")
         elif data == 'game_stop':
             await query.answer()
             game = get_current_game()
