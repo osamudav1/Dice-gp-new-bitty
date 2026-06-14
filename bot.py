@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageFont
 import io
+from pymongo import MongoClient
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, ChatPermissions
 from telegram.ext import (
@@ -22,6 +23,60 @@ from telegram.ext import (
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 OWNER_ID = int(os.environ.get("OWNER_ID", "123456789"))
 GAME_GROUP_ID = int(os.environ.get("GAME_GROUP_ID", "-1002849045181"))
+
+# ==================== MONGODB (Waifu Bot) ====================
+MONGODB_URL = os.environ.get("MONGODB_URL")
+EXCHANGE_RATE = 4350  # 1$ = 4350 MMK
+
+def get_waifu_coins(user_id: int):
+    """Get user's $ coins from waifu_bot MongoDB. Returns float or None."""
+    if not MONGODB_URL:
+        return None
+    try:
+        client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
+        db = client["waifu_bot"]
+        user = db["users"].find_one({"id": user_id})
+        client.close()
+        if user:
+            return float(user.get("coins", 0))
+        return None
+    except Exception as e:
+        print(f"MongoDB error: {e}")
+        return None
+
+def subtract_waifu_coins(user_id: int, amount_dollars: float) -> bool:
+    """Subtract $ from waifu_bot. Returns True if successful."""
+    if not MONGODB_URL:
+        return False
+    try:
+        client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
+        db = client["waifu_bot"]
+        result = db["users"].update_one(
+            {"id": user_id, "coins": {"$gte": amount_dollars}},
+            {"$inc": {"coins": -amount_dollars}}
+        )
+        client.close()
+        return result.modified_count > 0
+    except Exception as e:
+        print(f"MongoDB error: {e}")
+        return False
+
+def add_waifu_coins(user_id: int, amount_dollars: float) -> bool:
+    """Add $ to waifu_bot user. Returns True if successful."""
+    if not MONGODB_URL:
+        return False
+    try:
+        client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
+        db = client["waifu_bot"]
+        result = db["users"].update_one(
+            {"id": user_id},
+            {"$inc": {"coins": amount_dollars}}
+        )
+        client.close()
+        return result.modified_count > 0
+    except Exception as e:
+        print(f"MongoDB error: {e}")
+        return False
 
 MIN_BET = 50
 MAX_BET = 1000
@@ -1571,6 +1626,133 @@ def cleanup_stuck_games():
     if affected:
         print(f"⚠️  Closed {affected} stuck open game(s) from previous session.")
 
+# ==================== EXCHANGE COMMANDS ====================
+async def exchanged_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/exchangeD amount — $ မှ Dice MMK balance ကိုပြောင်း"""
+    user = update.effective_user
+    if not context.args:
+        await update.message.reply_text(
+            "💱 *သုံးနည်း:* `/exchangeD 4350`\n"
+            f"_(MMK ပမာဏထည့်ပါ, Rate: 1$ = {EXCHANGE_RATE:,} MMK)_",
+            parse_mode='Markdown'
+        )
+        return
+
+    try:
+        mmk_amount = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ဂဏန်းသာ ထည့်ပါ။ ဥပမာ: `/exchangeD 4350`", parse_mode='Markdown')
+        return
+
+    if mmk_amount < EXCHANGE_RATE:
+        await update.message.reply_text(f"❌ အနည်းဆုံး {EXCHANGE_RATE:,} MMK (1$) ထည့်ပါ။")
+        return
+
+    # Calculate dollars needed (rounded to 4 decimal places)
+    dollars_needed = round(mmk_amount / EXCHANGE_RATE, 4)
+
+    # Check waifu bot balance
+    coins = get_waifu_coins(user.id)
+    if coins is None:
+        await update.message.reply_text("❌ Waifu Bot တွင် သင့် account မတွေ့ပါ။\nWaifu Bot ကို အရင်သုံးဖူးရပါမည်။")
+        return
+
+    if coins < dollars_needed:
+        await update.message.reply_text(
+            f"❌ Waifu Bot $ လက်ကျန် မလုံလောက်ပါ\n\n"
+            f"💰 သင့်လက်ကျန်: `{coins:.4f}$`\n"
+            f"💸 လိုအပ်သည်: `{dollars_needed:.4f}$`",
+            parse_mode='Markdown'
+        )
+        return
+
+    # Deduct from waifu bot
+    success = subtract_waifu_coins(user.id, dollars_needed)
+    if not success:
+        await update.message.reply_text("❌ Waifu Bot $ နှုတ်ယူ မအောင်မြင်ပါ။ နောက်မှ ထပ်စမ်းပါ။")
+        return
+
+    # Add to dice bot balance
+    mention = f"@{user.username}" if user.username else user.full_name
+    create_or_update_user(user.id, user.full_name, mention)
+    new_dice_balance = update_balance(user.id, mmk_amount, 'add')
+
+    await update.message.reply_text(
+        f"✅ *Exchange အောင်မြင်ပါသည်*\n\n"
+        f"👤 {user.full_name}\n"
+        f"━━━━━━━━━━━━\n"
+        f"💸 Waifu Bot: `-{dollars_needed:.4f}$`\n"
+        f"💵 Dice Bot: `+{mmk_amount:,} MMK`\n"
+        f"━━━━━━━━━━━━\n"
+        f"💰 Dice Balance: `{new_dice_balance:,} MMK`\n"
+        f"📊 Rate: 1$ = {EXCHANGE_RATE:,} MMK",
+        parse_mode='Markdown'
+    )
+
+async def exchangew_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/exchangeW amount — Dice MMK balance မှ $ ကိုပြောင်း"""
+    user = update.effective_user
+    if not context.args:
+        await update.message.reply_text(
+            "💱 *သုံးနည်း:* `/exchangeW 4350`\n"
+            f"_(MMK ပမာဏထည့်ပါ, Rate: {EXCHANGE_RATE:,} MMK = 1$)_",
+            parse_mode='Markdown'
+        )
+        return
+
+    try:
+        mmk_amount = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ဂဏန်းသာ ထည့်ပါ။ ဥပမာ: `/exchangeW 4350`", parse_mode='Markdown')
+        return
+
+    if mmk_amount < EXCHANGE_RATE:
+        await update.message.reply_text(f"❌ အနည်းဆုံး {EXCHANGE_RATE:,} MMK (1$) ထည့်ပါ။")
+        return
+
+    # Check dice bot balance
+    user_data = get_user(user.id)
+    if not user_data or user_data['balance'] < mmk_amount:
+        current_bal = user_data['balance'] if user_data else 0
+        await update.message.reply_text(
+            f"❌ Dice Bot လက်ကျန် မလုံလောက်ပါ\n\n"
+            f"💰 သင့်လက်ကျန်: `{current_bal:,} MMK`\n"
+            f"💸 လိုအပ်သည်: `{mmk_amount:,} MMK`",
+            parse_mode='Markdown'
+        )
+        return
+
+    dollars_earned = round(mmk_amount / EXCHANGE_RATE, 4)
+
+    # Check waifu account exists
+    coins = get_waifu_coins(user.id)
+    if coins is None:
+        await update.message.reply_text("❌ Waifu Bot တွင် သင့် account မတွေ့ပါ။\nWaifu Bot ကို အရင်သုံးဖူးရပါမည်။")
+        return
+
+    # Deduct from dice bot
+    new_dice_balance = update_balance(user.id, mmk_amount, 'subtract')
+
+    # Add to waifu bot
+    success = add_waifu_coins(user.id, dollars_earned)
+    if not success:
+        # Rollback dice balance
+        update_balance(user.id, mmk_amount, 'add')
+        await update.message.reply_text("❌ Waifu Bot $ ထည့် မအောင်မြင်ပါ။ Balance ပြန်ထည့်ပြီးပါပြီ။")
+        return
+
+    await update.message.reply_text(
+        f"✅ *Exchange အောင်မြင်ပါသည်*\n\n"
+        f"👤 {user.full_name}\n"
+        f"━━━━━━━━━━━━\n"
+        f"💵 Dice Bot: `-{mmk_amount:,} MMK`\n"
+        f"💸 Waifu Bot: `+{dollars_earned:.4f}$`\n"
+        f"━━━━━━━━━━━━\n"
+        f"💰 Dice Balance: `{new_dice_balance:,} MMK`\n"
+        f"📊 Rate: {EXCHANGE_RATE:,} MMK = 1$",
+        parse_mode='Markdown'
+    )
+
 async def resetgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != OWNER_ID:
@@ -1604,6 +1786,8 @@ def main():
     app.add_handler(CommandHandler("listadmins", listadmins_command))
     app.add_handler(CommandHandler("mmk", mmk_command))
     app.add_handler(CommandHandler("resetgame", resetgame_command))
+    app.add_handler(CommandHandler("exchangeD", exchanged_command))
+    app.add_handler(CommandHandler("exchangeW", exchangew_command))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.Dice.ALL, handle_dice))
