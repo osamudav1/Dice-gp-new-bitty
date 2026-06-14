@@ -385,6 +385,25 @@ def create_game(chat_id):
     conn.close()
     return game_id
 
+def reset_open_game():
+    """Close any leftover open game and refund its pending bets.
+
+    A game can stay 'open' forever if a previous round was never finished
+    (e.g. the bot restarted before the dice result was processed), which then
+    blocks the start button. Returns the refunds as a list of (user_id, amount).
+    """
+    game = get_current_game()
+    if not game:
+        return []
+    game_id = game['game_id']
+    refunds = []
+    for bet in get_game_bets(game_id):
+        if bet['status'] == 'pending':
+            update_balance(bet['user_id'], bet['amount'], 'add')
+            refunds.append((bet['user_id'], bet['amount']))
+    close_game(game_id, 0, 0, 0)
+    return refunds
+
 def close_game(game_id, result_number, total_win_amount, owner_profit):
     conn = get_conn()
     c = conn.cursor()
@@ -856,9 +875,11 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
             return
         await query.answer()
         if data == 'game_start':
-            if get_current_game():
-                await query.answer("❌ ဂိမ်းအဖွင့်ရှိပြီးသားပါ။ /resetgame သုံးပါ", show_alert=True)
-                return
+            refunds = reset_open_game()
+            if refunds:
+                await query.message.reply_text(
+                    f"♻️ ပြီးခဲ့သော ပွဲစဉ်ကို ပိတ်ပြီး လောင်းကြေး {len(refunds)} ခု ပြန်အမ်းပြီးပါပြီ"
+                )
             await unlock_chat(context.bot, chat_id)
             game_id = create_game(chat_id)
             caption = (
