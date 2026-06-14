@@ -33,3 +33,9 @@ outputType = "console"
 [[ports]]
 localPort = 8080
 externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+OWNER_ID = "1735522859"
+GAME_GROUP_ID = "-1003537436108"
