@@ -1559,8 +1559,40 @@ def run_health_server():
     print(f"🌐 Health check server running on port {port}")
     server.serve_forever()
 
+# ==================== RESET STUCK GAMES ====================
+def cleanup_stuck_games():
+    """Close any open games left from a previous session (e.g. server restart)."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(f"UPDATE games SET status = 'closed', closed_at = {q()} WHERE status = 'open'", (datetime.now(),))
+    affected = c.rowcount
+    conn.commit()
+    conn.close()
+    if affected:
+        print(f"⚠️  Closed {affected} stuck open game(s) from previous session.")
+
+async def resetgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != OWNER_ID:
+        return
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(f"UPDATE games SET status = 'closed', closed_at = {q()} WHERE status = 'open'", (datetime.now(),))
+    affected = c.rowcount
+    conn.commit()
+    conn.close()
+    # Also clear in-memory dice flags
+    for key in list(context.bot_data.keys()):
+        if key.startswith('awaiting_dice_') or key.startswith('current_game_id_'):
+            context.bot_data[key] = False
+    if affected:
+        await update.message.reply_text(f"✅ Stuck game {affected} ပွဲ ပိတ်ပြီးပါပြီ။ ယခု ဂိမ်းအသစ် စနိုင်ပါပြီ။")
+    else:
+        await update.message.reply_text("ℹ️ Stuck game မရှိပါ။")
+
 # ==================== MAIN ====================
 async def post_init(application: Application):
+    cleanup_stuck_games()
     asyncio.create_task(auto_game_loop(application))
 
 def main():
@@ -1571,6 +1603,7 @@ def main():
     app.add_handler(CommandHandler("removeadmin", removeadmin_command))
     app.add_handler(CommandHandler("listadmins", listadmins_command))
     app.add_handler(CommandHandler("mmk", mmk_command))
+    app.add_handler(CommandHandler("resetgame", resetgame_command))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.Dice.ALL, handle_dice))
