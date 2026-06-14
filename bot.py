@@ -302,16 +302,16 @@ def get_current_game():
     conn.close()
     if game:
         return {
-            'id': game[0],
-            'game_id': game[1],
-            'chat_id': game[2],
-            'status': game[3],
-            'result_number': game[4],
-            'total_bet_amount': game[5],
-            'total_win_amount': game[6],
-            'owner_profit': game[7],
-            'created_at': game[8],
-            'closed_at': game[9]
+            'id': game[0] if len(game) > 0 else None,
+            'game_id': game[1] if len(game) > 1 else None,
+            'chat_id': game[2] if len(game) > 2 else None,
+            'status': game[3] if len(game) > 3 else None,
+            'result_number': game[4] if len(game) > 4 else None,
+            'total_bet_amount': game[5] if len(game) > 5 else 0,
+            'total_win_amount': game[6] if len(game) > 6 else 0,
+            'owner_profit': game[7] if len(game) > 7 else 0,
+            'created_at': game[8] if len(game) > 8 else None,
+            'closed_at': game[9] if len(game) > 9 else None
         }
     return None
 
