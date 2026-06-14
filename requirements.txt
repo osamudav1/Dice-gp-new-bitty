@@ -2,3 +2,6 @@ python-telegram-bot==22.7
 Pillow
 python-dotenv
 psycopg2-binary
+dnspython
+pymongo
+telegram
