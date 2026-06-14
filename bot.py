@@ -554,7 +554,7 @@ def get_user_game_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
-# ==================== AUTO MODE LOGIC ====================
+# ==================== AUTO MODE LOGIC (DISABLED - DEFAULT OFF) ====================
 async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
     while True:
         try:
@@ -1454,6 +1454,10 @@ async def post_init(application: Application):
     asyncio.create_task(auto_game_loop(application))
 
 def main():
+    # Set auto_dice to OFF by default
+    if get_setting('auto_dice') is None:
+        set_setting('auto_dice', 'off')
+    
     init_db()
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
@@ -1474,6 +1478,8 @@ def main():
     print("🎲 DICE GAME BOT STARTED")
     print(f"👑 OWNER: {OWNER_ID}")
     print(f"🎮 GROUP: {GAME_GROUP_ID}")
+    print(f"💰 MIN BET: {MIN_BET} | MAX BET: {MAX_BET}")
+    print("🤖 AUTO MODE: OFF (default)")
     print("=" * 50)
 
     app.run_polling(drop_pending_updates=True)
