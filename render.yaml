@@ -2,7 +2,7 @@ services:
   - type: web
     name: dice-game-bot
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && pip uninstall -y telegram || true
     startCommand: python bot.py
     healthCheckPath: /
     envVars:
@@ -11,6 +11,8 @@ services:
       - key: OWNER_ID
         sync: false
       - key: GAME_GROUP_ID
+        sync: false
+      - key: MONGODB_URL
         sync: false
       - key: DATABASE_URL
         fromDatabase:

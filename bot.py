@@ -728,6 +728,7 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(chat_id=GAME_GROUP_ID, text=result_text, parse_mode='Markdown', reply_markup=get_owner_button())
 
                     await context.bot.send_message(chat_id=GAME_GROUP_ID, text="🔚 ပွဲစဉ်ပြီးပါပြီ")
+                    await unlock_chat(context.bot, GAME_GROUP_ID)
                     
                     try:
                         owner_report = (
@@ -1476,6 +1477,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=result_text, parse_mode='Markdown', reply_markup=get_owner_button())
 
     await context.bot.send_message(chat_id=chat_id, text="🔚 ပွဲစဉ်ပြီးပါပြီ")
+    await unlock_chat(context.bot, chat_id)
     context.bot_data[f'awaiting_dice_{chat_id}'] = False
 
     # Report to owner
