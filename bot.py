@@ -1801,6 +1801,20 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_message))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
 
+    async def error_handler(update, context):
+        import traceback
+        err = context.error
+        tb = "".join(traceback.format_exception(type(err), err, err.__traceback__))
+        print(f"❌ ERROR:\n{tb}")
+        # Conflict = another instance is running
+        from telegram.error import Conflict, TimedOut, NetworkError
+        if isinstance(err, Conflict):
+            print("⚠️ CONFLICT: Bot is already running elsewhere! Stop the other instance.")
+        elif isinstance(err, (TimedOut, NetworkError)):
+            print("⚠️ Network issue — will retry automatically.")
+
+    app.add_error_handler(error_handler)
+
     health_thread = threading.Thread(target=run_health_server, daemon=True)
     health_thread.start()
 
