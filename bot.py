@@ -1,5 +1,4 @@
 import logging
-import sqlite3
 import random
 import time
 import asyncio
@@ -29,9 +28,7 @@ MONGODB_URL = os.environ.get("MONGODB_URL")
 EXCHANGE_RATE = 4350  # 1$ = 4350 MMK
 
 def get_waifu_coins(user_id: int):
-    """Get user's $ balance from waifu_bot MongoDB.
-    coins field stores cents (×100), so we divide by 100 to get dollars.
-    Returns float dollars or None if user not found."""
+    """Get user's $ balance from waifu_bot MongoDB."""
     if not MONGODB_URL:
         return None
     try:
@@ -41,14 +38,14 @@ def get_waifu_coins(user_id: int):
         client.close()
         if user is not None:
             raw = float(user.get("coins", 0))
-            return round(raw / 100, 4)  # convert cents → dollars
+            return round(raw / 100, 4)
         return None
     except Exception as e:
         print(f"MongoDB error: {e}")
         return None
 
 def subtract_waifu_coins(user_id: int, amount_dollars: float) -> bool:
-    """Subtract dollars from waifu_bot (stored as cents ×100)."""
+    """Subtract dollars from waifu_bot."""
     if not MONGODB_URL:
         return False
     try:
@@ -66,7 +63,7 @@ def subtract_waifu_coins(user_id: int, amount_dollars: float) -> bool:
         return False
 
 def add_waifu_coins(user_id: int, amount_dollars: float) -> bool:
-    """Add dollars to waifu_bot user (stored as cents ×100)."""
+    """Add dollars to waifu_bot."""
     if not MONGODB_URL:
         return False
     try:
@@ -83,113 +80,333 @@ def add_waifu_coins(user_id: int, amount_dollars: float) -> bool:
         print(f"MongoDB error: {e}")
         return False
 
-MIN_BET = 50
-MAX_BET = 1000
+MIN_BET = 500
+MAX_BET = 1000000
 
-# ==================== DATABASE SETUP ====================
-DATABASE_URL = os.environ.get("DATABASE_URL")
-USE_PG = bool(DATABASE_URL)
+# ==================== JSON DATABASE (SQLite REPLACEMENT) ====================
+DB_FILE = "database.json"
 
-def get_conn():
-    if USE_PG:
-        import psycopg2
-        return psycopg2.connect(DATABASE_URL)
-    return sqlite3.connect('bot_database.db')
+def _load_db():
+    """Load database from JSON file"""
+    if not os.path.exists(DB_FILE):
+        return {
+            "users": {},
+            "games": [],
+            "bets": [],
+            "admins": [],
+            "game_images": {},
+            "settings": {},
+            "game_id_counter": 100000
+        }
+    with open(DB_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-def Q(n=1):
-    ph = '%s' if USE_PG else '?'
-    return ', '.join([ph] * n)
+def _save_db(data):
+    """Save database to JSON file"""
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, default=str, ensure_ascii=False)
 
-def q():
-    return '%s' if USE_PG else '?'
+# ==================== USERS ====================
+def get_user(user_id):
+    db = _load_db()
+    user = db["users"].get(str(user_id))
+    if user:
+        user["user_id"] = user_id
+    return user
 
-def init_db():
-    conn = get_conn()
-    c = conn.cursor()
-    if USE_PG:
-        c.execute('''CREATE TABLE IF NOT EXISTS admins
-                     (user_id BIGINT PRIMARY KEY,
-                      name TEXT,
-                      added_at TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS users
-                     (user_id TEXT PRIMARY KEY,
-                      name TEXT,
-                      mention TEXT,
-                      total_bet BIGINT DEFAULT 0,
-                      total_win BIGINT DEFAULT 0,
-                      balance BIGINT DEFAULT 0)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS games
-                     (id BIGSERIAL PRIMARY KEY,
-                      game_id BIGINT UNIQUE,
-                      chat_id BIGINT,
-                      status TEXT,
-                      result_number INTEGER,
-                      total_bet_amount BIGINT DEFAULT 0,
-                      total_win_amount BIGINT DEFAULT 0,
-                      owner_profit BIGINT DEFAULT 0,
-                      created_at TIMESTAMP,
-                      closed_at TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS bets
-                     (id BIGSERIAL PRIMARY KEY,
-                      game_id BIGINT,
-                      user_id TEXT,
-                      bet_number INTEGER,
-                      amount BIGINT,
-                      status TEXT,
-                      win_amount BIGINT DEFAULT 0,
-                      timestamp TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS game_images
-                         (id BIGSERIAL PRIMARY KEY,
-                          image_type TEXT UNIQUE,
-                          photo_id TEXT,
-                          updated_by TEXT,
-                          updated_at TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS settings
-                     (key TEXT PRIMARY KEY,
-                      value TEXT)''')
+def get_user_by_username(username):
+    if not username.startswith('@'):
+        username = '@' + username
+    db = _load_db()
+    for uid, user in db["users"].items():
+        if user.get("mention") == username:
+            user["user_id"] = int(uid)
+            return user
+    return None
+
+def create_or_update_user(user_id, name, mention):
+    db = _load_db()
+    uid = str(user_id)
+    if uid not in db["users"]:
+        db["users"][uid] = {
+            "name": name,
+            "mention": mention,
+            "total_bet": 0,
+            "total_win": 0,
+            "balance": 0
+        }
     else:
-        c.execute('''CREATE TABLE IF NOT EXISTS admins
-                     (user_id INTEGER PRIMARY KEY,
-                      name TEXT,
-                      added_at TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS users
-                     (user_id TEXT PRIMARY KEY,
-                      name TEXT,
-                      mention TEXT,
-                      total_bet INTEGER DEFAULT 0,
-                      total_win INTEGER DEFAULT 0,
-                      balance INTEGER DEFAULT 0)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS games
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      game_id INTEGER UNIQUE,
-                      chat_id INTEGER,
-                      status TEXT,
-                      result_number INTEGER,
-                      total_bet_amount INTEGER DEFAULT 0,
-                      total_win_amount INTEGER DEFAULT 0,
-                      owner_profit INTEGER DEFAULT 0,
-                      created_at TIMESTAMP,
-                      closed_at TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS bets
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      game_id INTEGER,
-                      user_id TEXT,
-                      bet_number INTEGER,
-                      amount INTEGER,
-                      status TEXT,
-                      win_amount INTEGER DEFAULT 0,
-                      timestamp TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS game_images
-                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                          image_type TEXT UNIQUE,
-                          photo_id TEXT,
-                          updated_by TEXT,
-                          updated_at TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS settings
-                     (key TEXT PRIMARY KEY,
-                      value TEXT)''')
-    conn.commit()
-    conn.close()
+        db["users"][uid]["name"] = name
+        db["users"][uid]["mention"] = mention
+    _save_db(db)
+
+def update_balance(user_id, amount, operation='add'):
+    db = _load_db()
+    uid = str(user_id)
+    if uid not in db["users"]:
+        db["users"][uid] = {
+            "name": "Unknown",
+            "mention": "",
+            "total_bet": 0,
+            "total_win": 0,
+            "balance": 0
+        }
+    
+    if operation == 'add':
+        db["users"][uid]["balance"] += amount
+    else:
+        db["users"][uid]["balance"] -= amount
+    
+    new_balance = db["users"][uid]["balance"]
+    _save_db(db)
+    return new_balance
+
+def update_user_stats(user_id, bet_amount, win_amount=0):
+    db = _load_db()
+    uid = str(user_id)
+    if uid in db["users"]:
+        db["users"][uid]["total_bet"] += bet_amount
+        db["users"][uid]["total_win"] += win_amount
+        _save_db(db)
+
+# ==================== GAMES ====================
+def get_next_game_id():
+    db = _load_db()
+    db["game_id_counter"] = db.get("game_id_counter", 100000) + 1
+    _save_db(db)
+    return db["game_id_counter"]
+
+def get_current_game():
+    db = _load_db()
+    for game in reversed(db["games"]):
+        if game.get("status") == "open":
+            return game
+    return None
+
+def create_game(chat_id):
+    game_id = get_next_game_id()
+    db = _load_db()
+    game = {
+        "id": len(db["games"]) + 1,
+        "game_id": game_id,
+        "chat_id": chat_id,
+        "status": "open",
+        "result_number": None,
+        "total_bet_amount": 0,
+        "total_win_amount": 0,
+        "owner_profit": 0,
+        "created_at": datetime.now().isoformat(),
+        "closed_at": None
+    }
+    db["games"].append(game)
+    _save_db(db)
+    return game_id
+
+def close_game(game_id, result_number, total_win_amount, owner_profit):
+    db = _load_db()
+    for game in db["games"]:
+        if game["game_id"] == game_id:
+            game["status"] = "closed"
+            game["result_number"] = result_number
+            game["total_win_amount"] = total_win_amount
+            game["owner_profit"] = owner_profit
+            game["closed_at"] = datetime.now().isoformat()
+            break
+    _save_db(db)
+
+def get_game_bets(game_id):
+    db = _load_db()
+    bets = []
+    for bet in db["bets"]:
+        if bet["game_id"] == game_id:
+            user = get_user(bet["user_id"])
+            bet_copy = bet.copy()
+            bet_copy["user_name"] = user["name"] if user else "Unknown"
+            bets.append(bet_copy)
+    return bets
+
+# ==================== BETS ====================
+def save_bet(game_id, user_id, bet_number, amount):
+    db = _load_db()
+    bet = {
+        "id": len(db["bets"]) + 1,
+        "game_id": game_id,
+        "user_id": user_id,
+        "bet_number": bet_number,
+        "amount": amount,
+        "status": "pending",
+        "win_amount": 0,
+        "timestamp": datetime.now().isoformat()
+    }
+    db["bets"].append(bet)
+    
+    for game in db["games"]:
+        if game["game_id"] == game_id:
+            game["total_bet_amount"] += amount
+            break
+    
+    _save_db(db)
+    update_user_stats(user_id, amount, 0)
+
+def cancel_bet_db(game_id, user_id):
+    db = _load_db()
+    total_refund = 0
+    remaining_bets = []
+    
+    for bet in db["bets"]:
+        if bet["game_id"] == game_id and bet["user_id"] == user_id and bet["status"] == "pending":
+            total_refund += bet["amount"]
+        else:
+            remaining_bets.append(bet)
+    
+    if total_refund > 0:
+        db["bets"] = remaining_bets
+        for game in db["games"]:
+            if game["game_id"] == game_id:
+                game["total_bet_amount"] -= total_refund
+                break
+        _save_db(db)
+    
+    return total_refund
+
+def update_bet_results(game_id, result_number):
+    db = _load_db()
+    winners = []
+    total_win_amount = 0
+    
+    for bet in db["bets"]:
+        if bet["game_id"] == game_id:
+            if bet["bet_number"] == result_number:
+                win_amount = bet["amount"] * result_number
+                bet["status"] = "won"
+                bet["win_amount"] = win_amount
+                winners.append(bet)
+                total_win_amount += win_amount
+                uid = str(bet["user_id"])
+                if uid in db["users"]:
+                    db["users"][uid]["total_win"] += win_amount
+            else:
+                bet["status"] = "lost"
+    
+    _save_db(db)
+    return winners, total_win_amount
+
+def get_user_bets(user_id, game_id=None):
+    db = _load_db()
+    result = []
+    for bet in db["bets"]:
+        if bet["user_id"] == user_id:
+            if game_id is None or bet["game_id"] == game_id:
+                result.append((
+                    bet["id"], bet["game_id"], bet["user_id"],
+                    bet["bet_number"], bet["amount"], bet["status"],
+                    bet["win_amount"], bet["timestamp"]
+                ))
+    return result
+
+def get_user_bet_count_for_game(user_id, game_id):
+    db = _load_db()
+    count = 0
+    for bet in db["bets"]:
+        if bet["user_id"] == user_id and bet["game_id"] == game_id:
+            count += 1
+    return count
+
+# ==================== ADMINS ====================
+def add_admin(user_id, name):
+    db = _load_db()
+    db["admins"] = [a for a in db["admins"] if a["user_id"] != user_id]
+    db["admins"].append({
+        "user_id": user_id,
+        "name": name,
+        "added_at": datetime.now().isoformat()
+    })
+    _save_db(db)
+
+def remove_admin(user_id):
+    db = _load_db()
+    original_count = len(db["admins"])
+    db["admins"] = [a for a in db["admins"] if a["user_id"] != user_id]
+    if len(db["admins"]) < original_count:
+        _save_db(db)
+        return True
+    return False
+
+def is_admin(user_id):
+    db = _load_db()
+    return any(a["user_id"] == user_id for a in db["admins"])
+
+def get_admins():
+    db = _load_db()
+    return [(a["user_id"], a["name"], a["added_at"]) for a in db["admins"]]
+
+def is_staff(user_id):
+    return user_id == OWNER_ID or is_admin(user_id)
+
+# ==================== GAME IMAGES ====================
+def save_game_image(image_type, photo_id, updated_by):
+    db = _load_db()
+    db["game_images"][image_type] = {
+        "photo_id": photo_id,
+        "updated_by": updated_by,
+        "updated_at": datetime.now().isoformat()
+    }
+    _save_db(db)
+
+def get_game_image(image_type):
+    db = _load_db()
+    img = db["game_images"].get(image_type)
+    return img["photo_id"] if img else None
+
+def delete_game_image(image_type):
+    db = _load_db()
+    if image_type in db["game_images"]:
+        del db["game_images"][image_type]
+        _save_db(db)
+
+# ==================== SETTINGS ====================
+def set_setting(key, value):
+    db = _load_db()
+    db["settings"][key] = value
+    _save_db(db)
+
+def get_setting(key, default=None):
+    db = _load_db()
+    return db["settings"].get(key, default)
+
+# ==================== BACKUP & RESTORE ====================
+def create_backup():
+    db = _load_db()
+    filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(db, f, indent=2, default=str, ensure_ascii=False)
+    return filename
+
+def restore_backup(file_path):
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        required_keys = ["users", "games", "bets", "admins", "game_images", "settings", "game_id_counter"]
+        for key in required_keys:
+            if key not in data:
+                data[key] = {} if key not in ["games", "bets", "admins"] else []
+        _save_db(data)
+        return True, "Restore Successful"
+    except Exception as e:
+        return False, str(e)
+
+def cleanup_stuck_games():
+    """Close any open games from previous session."""
+    db = _load_db()
+    changed = False
+    for game in db["games"]:
+        if game.get("status") == "open":
+            game["status"] = "closed"
+            game["closed_at"] = datetime.now().isoformat()
+            changed = True
+    if changed:
+        _save_db(db)
+        print("⚠️ Closed stuck open games from previous session.")
 
 # ==================== CHAT PERMISSION FUNCTIONS ====================
 async def lock_chat(bot, chat_id):
@@ -219,370 +436,6 @@ async def unlock_chat(bot, chat_id):
         await bot.set_chat_permissions(chat_id=chat_id, permissions=permissions)
     except Exception as e:
         print(f"Error unlocking chat {chat_id}: {e}")
-
-# ==================== IMAGE FUNCTIONS ====================
-def save_game_image(image_type, photo_id, updated_by):
-    conn = get_conn()
-    c = conn.cursor()
-    if USE_PG:
-        c.execute(
-            f"INSERT INTO game_images (image_type, photo_id, updated_by, updated_at) VALUES ({Q(4)}) "
-            f"ON CONFLICT (image_type) DO UPDATE SET photo_id = EXCLUDED.photo_id, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at",
-            (image_type, photo_id, str(updated_by), datetime.now())
-        )
-    else:
-        c.execute(
-            f"INSERT OR REPLACE INTO game_images (image_type, photo_id, updated_by, updated_at) VALUES ({Q(4)})",
-            (image_type, photo_id, str(updated_by), datetime.now())
-        )
-    conn.commit()
-    conn.close()
-
-def get_game_image(image_type):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"SELECT photo_id FROM game_images WHERE image_type = {q()} ORDER BY updated_at DESC LIMIT 1", (image_type,))
-    result = c.fetchone()
-    conn.close()
-    return result[0] if result else None
-
-def delete_game_image(image_type):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"DELETE FROM game_images WHERE image_type = {q()}", (image_type,))
-    conn.commit()
-    conn.close()
-
-def set_setting(key, value):
-    conn = get_conn()
-    c = conn.cursor()
-    if USE_PG:
-        c.execute(f"INSERT INTO settings (key, value) VALUES ({Q(2)}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (key, str(value)))
-    else:
-        c.execute(f"INSERT OR REPLACE INTO settings (key, value) VALUES ({Q(2)})", (key, str(value)))
-    conn.commit()
-    conn.close()
-
-def get_setting(key, default=None):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"SELECT value FROM settings WHERE key = {q()}", (key,))
-    result = c.fetchone()
-    conn.close()
-    return result[0] if result else default
-
-# ==================== DATABASE FUNCTIONS ====================
-def get_next_game_id():
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT game_id FROM games ORDER BY game_id DESC LIMIT 1")
-    result = c.fetchone()
-    conn.close()
-    return result[0] + 1 if result else 100000
-
-def get_user(user_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"SELECT * FROM users WHERE user_id = {q()}", (str(user_id),))
-    user = c.fetchone()
-    conn.close()
-    if user:
-        return {
-            'user_id': user[0],
-            'name': user[1],
-            'mention': user[2],
-            'total_bet': user[3],
-            'total_win': user[4],
-            'balance': user[5]
-        }
-    return None
-
-def get_user_by_username(username):
-    if not username.startswith('@'):
-        username = '@' + username
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"SELECT * FROM users WHERE mention = {q()}", (username,))
-    user = c.fetchone()
-    conn.close()
-    if user:
-        return {
-            'user_id': user[0],
-            'name': user[1],
-            'mention': user[2],
-            'total_bet': user[3],
-            'total_win': user[4],
-            'balance': user[5]
-        }
-    return None
-
-def create_or_update_user(user_id, name, mention):
-    conn = get_conn()
-    c = conn.cursor()
-    if USE_PG:
-        c.execute(
-            f"INSERT INTO users (user_id, name, mention, balance) VALUES ({Q(4)}) "
-            f"ON CONFLICT (user_id) DO UPDATE SET name = EXCLUDED.name, mention = EXCLUDED.mention",
-            (str(user_id), name, mention, 0)
-        )
-    else:
-        c.execute(
-            f"INSERT OR REPLACE INTO users (user_id, name, mention, balance) VALUES ({q()}, {q()}, {q()}, COALESCE((SELECT balance FROM users WHERE user_id = {q()}), 0))",
-            (str(user_id), name, mention, str(user_id))
-        )
-    conn.commit()
-    conn.close()
-
-def update_balance(user_id, amount, operation='add'):
-    conn = get_conn()
-    c = conn.cursor()
-    if operation == 'add':
-        c.execute(f"UPDATE users SET balance = balance + {q()} WHERE user_id = {q()}", (amount, str(user_id)))
-    else:
-        c.execute(f"UPDATE users SET balance = balance - {q()} WHERE user_id = {q()}", (amount, str(user_id)))
-    conn.commit()
-    c.execute(f"SELECT balance FROM users WHERE user_id = {q()}", (str(user_id),))
-    new_balance = c.fetchone()[0]
-    conn.close()
-    return new_balance
-
-def update_user_stats(user_id, bet_amount, win_amount=0):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"UPDATE users SET total_bet = total_bet + {q()}, total_win = total_win + {q()} WHERE user_id = {q()}",
-              (bet_amount, win_amount, str(user_id)))
-    conn.commit()
-    conn.close()
-
-def get_current_game():
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT * FROM games WHERE status = 'open' ORDER BY game_id DESC LIMIT 1")
-    game = c.fetchone()
-    conn.close()
-    if game:
-        return {
-            'id': game[0] if len(game) > 0 else None,
-            'game_id': game[1] if len(game) > 1 else None,
-            'chat_id': game[2] if len(game) > 2 else None,
-            'status': game[3] if len(game) > 3 else None,
-            'result_number': game[4] if len(game) > 4 else None,
-            'total_bet_amount': game[5] if len(game) > 5 else 0,
-            'total_win_amount': game[6] if len(game) > 6 else 0,
-            'owner_profit': game[7] if len(game) > 7 else 0,
-            'created_at': game[8] if len(game) > 8 else None,
-            'closed_at': game[9] if len(game) > 9 else None
-        }
-    return None
-
-def create_game(chat_id):
-    game_id = get_next_game_id()
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"INSERT INTO games (game_id, chat_id, status, total_bet_amount, total_win_amount, owner_profit, created_at) VALUES ({q()}, {q()}, 'open', 0, 0, 0, {q()})",
-              (game_id, chat_id, datetime.now()))
-    conn.commit()
-    conn.close()
-    return game_id
-
-def close_game(game_id, result_number, total_win_amount, owner_profit):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"UPDATE games SET status = 'closed', result_number = {q()}, total_win_amount = {q()}, owner_profit = {q()}, closed_at = {q()} WHERE game_id = {q()}",
-              (result_number, total_win_amount, owner_profit, datetime.now(), game_id))
-    conn.commit()
-    conn.close()
-
-def save_bet(game_id, user_id, bet_number, amount):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"INSERT INTO bets (game_id, user_id, bet_number, amount, status, timestamp) VALUES ({q()}, {q()}, {q()}, {q()}, 'pending', {q()})",
-              (game_id, str(user_id), bet_number, amount, datetime.now()))
-    c.execute(f"UPDATE games SET total_bet_amount = total_bet_amount + {q()} WHERE game_id = {q()}",
-              (amount, game_id))
-    conn.commit()
-    conn.close()
-    update_user_stats(user_id, amount, 0)
-
-def cancel_bet_db(game_id, user_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"SELECT SUM(amount) FROM bets WHERE game_id = {q()} AND user_id = {q()} AND status = 'pending'",
-              (game_id, str(user_id)))
-    row = c.fetchone()
-    total = row[0] if row[0] else 0
-    if total == 0:
-        conn.close()
-        return 0
-    c.execute(f"DELETE FROM bets WHERE game_id = {q()} AND user_id = {q()} AND status = 'pending'",
-              (game_id, str(user_id)))
-    c.execute(f"UPDATE games SET total_bet_amount = total_bet_amount - {q()} WHERE game_id = {q()}",
-              (total, game_id))
-    conn.commit()
-    conn.close()
-    return total
-
-def get_game_bets(game_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"SELECT * FROM bets WHERE game_id = {q()}", (game_id,))
-    bets = c.fetchall()
-    conn.close()
-    result = []
-    for bet in bets:
-        user = get_user(bet[2])
-        result.append({
-            'id': bet[0],
-            'game_id': bet[1],
-            'user_id': bet[2],
-            'bet_number': bet[3],
-            'amount': bet[4],
-            'status': bet[5],
-            'win_amount': bet[6],
-            'user_name': user['name'] if user else 'Unknown'
-        })
-    return result
-
-def update_bet_results(game_id, result_number):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"SELECT * FROM bets WHERE game_id = {q()}", (game_id,))
-    bets = c.fetchall()
-    winners = []
-    total_win_amount = 0
-    for bet in bets:
-        if bet[3] == result_number:
-            win_amount = bet[4] * result_number
-            c.execute(f"UPDATE bets SET status = 'won', win_amount = {q()} WHERE id = {q()}", (win_amount, bet[0]))
-            winners.append(bet)
-            total_win_amount += win_amount
-            user_id = bet[2]
-            c.execute(f"UPDATE users SET total_win = total_win + {q()} WHERE user_id = {q()}", (win_amount, str(user_id)))
-        else:
-            c.execute(f"UPDATE bets SET status = 'lost', win_amount = 0 WHERE id = {q()}", (bet[0],))
-    conn.commit()
-    conn.close()
-    return winners, total_win_amount
-
-def get_user_bets(user_id, game_id=None):
-    conn = get_conn()
-    c = conn.cursor()
-    if game_id:
-        c.execute(f"SELECT * FROM bets WHERE user_id = {q()} AND game_id = {q()}", (str(user_id), game_id))
-    else:
-        c.execute(f"SELECT * FROM bets WHERE user_id = {q()} ORDER BY timestamp DESC LIMIT 10", (str(user_id),))
-    bets = c.fetchall()
-    conn.close()
-    return bets
-
-def get_user_bet_count_for_game(user_id, game_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"SELECT COUNT(*) FROM bets WHERE user_id = {q()} AND game_id = {q()}", (str(user_id), game_id))
-    count = c.fetchone()[0]
-    conn.close()
-    return count
-
-# ==================== BACKUP FUNCTIONS ====================
-def create_backup():
-    conn = get_conn()
-    c = conn.cursor()
-    backup_data = {
-        'users': [],
-        'games': [],
-        'bets': [],
-        'timestamp': datetime.now().isoformat()
-    }
-    c.execute("SELECT * FROM users")
-    for user in c.fetchall():
-        backup_data['users'].append({
-            'user_id': user[0], 'name': user[1], 'mention': user[2],
-            'total_bet': user[3], 'total_win': user[4], 'balance': user[5]
-        })
-    c.execute("SELECT * FROM games")
-    for game in c.fetchall():
-        backup_data['games'].append({
-            'id': game[0], 'game_id': game[1], 'chat_id': game[2], 'status': game[3],
-            'result_number': game[4], 'total_bet_amount': game[5],
-            'total_win_amount': game[6], 'owner_profit': game[7],
-            'created_at': str(game[8]), 'closed_at': str(game[9])
-        })
-    c.execute("SELECT * FROM bets")
-    for bet in c.fetchall():
-        backup_data['bets'].append({
-            'id': bet[0], 'game_id': bet[1], 'user_id': bet[2], 'bet_number': bet[3],
-            'amount': bet[4], 'status': bet[5], 'win_amount': bet[6], 'timestamp': str(bet[7])
-        })
-    conn.close()
-    filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(filename, 'w') as f:
-        json.dump(backup_data, f)
-    return filename
-
-def restore_backup(file_path):
-    try:
-        with open(file_path, 'r') as f:
-            data = json.load(f)
-        conn = get_conn()
-        c = conn.cursor()
-        c.execute("DELETE FROM users")
-        for u in data['users']:
-            c.execute(f"INSERT INTO users (user_id, name, mention, total_bet, total_win, balance) VALUES ({Q(6)})",
-                      (u['user_id'], u['name'], u['mention'], u['total_bet'], u['total_win'], u['balance']))
-        c.execute("DELETE FROM games")
-        for g in data['games']:
-            c.execute(f"INSERT INTO games (id, game_id, chat_id, status, result_number, total_bet_amount, total_win_amount, owner_profit, created_at, closed_at) VALUES ({Q(10)})",
-                      (g['id'], g['game_id'], g.get('chat_id', GAME_GROUP_ID), g['status'], g['result_number'], g['total_bet_amount'], g['total_win_amount'], g['owner_profit'], g['created_at'], g['closed_at']))
-        c.execute("DELETE FROM bets")
-        for b in data['bets']:
-            c.execute(f"INSERT INTO bets (id, game_id, user_id, bet_number, amount, status, win_amount, timestamp) VALUES ({Q(8)})",
-                      (b['id'], b['game_id'], b['user_id'], b['bet_number'], b['amount'], b['status'], b['win_amount'], b['timestamp']))
-        conn.commit()
-        conn.close()
-        return True, "Restore Successful"
-    except Exception as e:
-        return False, str(e)
-
-# ==================== ADMIN FUNCTIONS ====================
-def add_admin(user_id, name):
-    conn = get_conn()
-    c = conn.cursor()
-    if USE_PG:
-        c.execute(f"INSERT INTO admins (user_id, name, added_at) VALUES ({Q(3)}) ON CONFLICT (user_id) DO UPDATE SET name = EXCLUDED.name",
-                  (user_id, name, datetime.now()))
-    else:
-        c.execute(f"INSERT OR REPLACE INTO admins (user_id, name, added_at) VALUES ({Q(3)})",
-                  (user_id, name, datetime.now()))
-    conn.commit()
-    conn.close()
-
-def remove_admin(user_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"DELETE FROM admins WHERE user_id = {q()}", (user_id,))
-    affected = c.rowcount
-    conn.commit()
-    conn.close()
-    return affected > 0
-
-def is_admin(user_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"SELECT user_id FROM admins WHERE user_id = {q()}", (user_id,))
-    result = c.fetchone()
-    conn.close()
-    return result is not None
-
-def get_admins():
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT user_id, name, added_at FROM admins ORDER BY added_at")
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-def is_staff(user_id):
-    return user_id == OWNER_ID or is_admin(user_id)
 
 # ==================== UTILITY ====================
 def parse_bet(text):
@@ -625,13 +478,10 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
 
             game = get_current_game()
             if not game:
-                # No game running, wait 3s and start new game
                 await asyncio.sleep(3)
                 if get_setting('auto_dice', 'off') != 'on': continue
                 
-                # Unlock chat for betting
                 await unlock_chat(context.bot, GAME_GROUP_ID)
-                
                 game_id = create_game(GAME_GROUP_ID)
                 caption = (
                     f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
@@ -639,7 +489,6 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                     f"တစ်ယောက် နှစ်ကြိမ်အထိ လောင်းနိုင်သည် (မတူသောနံပါတ်)\n"
                     f"Min {MIN_BET:,}ကျပ် │ Max {MAX_BET:,}ကျပ်"
                 )
-                
                 custom_image = get_game_image('game_start')
                 try:
                     if custom_image:
@@ -650,22 +499,17 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                     print(f"Error starting game in {GAME_GROUP_ID}: {e}")
                 continue
 
-            # Game is open, check if anyone has bet
             bets = get_game_bets(game['game_id'])
             if bets:
-                # Someone bet, wait 30s then stop game
                 try:
                     await context.bot.send_message(chat_id=GAME_GROUP_ID, text="⏳ လောင်းကြေးများ ရောက်ရှိလာပါပြီ။ နောက် ၃၀ စက္ကန့်အတွင်း ပွဲပိတ်ပါမည်။")
                 except: pass
                 await asyncio.sleep(30)
                 
-                # Stop game logic
-                game = get_current_game() # Re-fetch to be sure
+                game = get_current_game()
                 if not game: continue
                 
-                # Lock chat when game stops
                 await lock_chat(context.bot, GAME_GROUP_ID)
-                
                 game_id = game['game_id']
                 bets = get_game_bets(game_id)
                 
@@ -689,11 +533,9 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(chat_id=GAME_GROUP_ID, text="🤖 *Auto Dice Mode: ON*\nBot မှ အလိုအလျောက် အံစာတုံးလှည့်ပေးနေပါသည်...", parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
                     await asyncio.sleep(2)
                     
-                    # Send dice
                     dice_msg = await context.bot.send_dice(chat_id=GAME_GROUP_ID)
                     dice_value = dice_msg.dice.value
                     
-                    # Process result
                     await asyncio.sleep(4)
                     winners, total_win_amount = update_bet_results(game_id, dice_value)
                     total_bet_amount = game['total_bet_amount']
@@ -744,10 +586,8 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     print(f"Error processing game result: {e}")
                 
-                # Wait 3s before next cycle
                 await asyncio.sleep(3)
             else:
-                # No bets yet, wait a bit
                 await asyncio.sleep(5)
             await asyncio.sleep(2)
         except Exception as e:
@@ -764,11 +604,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mention = f"@{user.username}" if user.username else user.full_name
     create_or_update_user(user.id, user.full_name, mention)
 
-    # Restricted to Private chat or Groups
     if chat.type not in ['private', 'group', 'supergroup']:
         return
 
-    # GAME GROUP / ANY GROUP
     if chat.type in ['group', 'supergroup']:
         if is_staff(user.id):
             label = "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*" if user.id == OWNER_ID else "🛡 *Admin ထိန်းချုပ်ခန်း*"
@@ -800,7 +638,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # PRIVATE CHAT - Owner full panel
     if chat.type == 'private' and user.id == OWNER_ID:
         auto_dice = get_setting('auto_dice', 'off')
         auto_dice_label = "🎲 Auto Dice: ON" if auto_dice == 'on' else "🎲 Auto Dice: OFF"
@@ -821,7 +658,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # PRIVATE CHAT - Admin limited panel
     if chat.type == 'private' and is_admin(user.id):
         await update.message.reply_text(
             "🛡 *Admin ထိန်းချုပ်ခန်း*\n\nGroup ထဲတွင် /start နှိပ်ပြီး ဂိမ်းစ/ပိတ်နိုင်သည်။",
@@ -848,14 +684,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 async def _handle_callback_inner(update, context, query, user, data, chat_id):
-
-    # game_start / game_stop → staff (owner or admin) only
     if data in ['game_start', 'game_stop']:
         if not is_staff(user.id):
             await query.answer("Staff သာ အသုံးပြုနိုင်သည်", show_alert=True)
             return
         
-        # We handle query.answer() inside each condition to avoid double answering
         if data == 'game_start':
             try:
                 if get_current_game():
@@ -864,7 +697,6 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
                 
                 await query.answer("ဂိမ်းစတင်နေပါပြီ...")
                 
-                # Update GAME_GROUP_ID dynamically if needed
                 global GAME_GROUP_ID
                 if chat_id != OWNER_ID:
                     GAME_GROUP_ID = chat_id
@@ -884,28 +716,12 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
                 
                 try:
                     if custom_image:
-                        await context.bot.send_photo(
-                            chat_id=chat_id, 
-                            photo=custom_image, 
-                            caption=caption, 
-                            parse_mode='Markdown', 
-                            reply_markup=reply_markup
-                        )
+                        await context.bot.send_photo(chat_id=chat_id, photo=custom_image, caption=caption, parse_mode='Markdown', reply_markup=reply_markup)
                     else:
-                        await context.bot.send_message(
-                            chat_id=chat_id, 
-                            text=caption, 
-                            parse_mode='Markdown', 
-                            reply_markup=reply_markup
-                        )
+                        await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode='Markdown', reply_markup=reply_markup)
                 except Exception as e:
                     print(f"Error sending game start message: {e}")
-                    await context.bot.send_message(
-                        chat_id=chat_id, 
-                        text=caption, 
-                        parse_mode='Markdown', 
-                        reply_markup=reply_markup
-                    )
+                    await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode='Markdown', reply_markup=reply_markup)
             except Exception as e:
                 print(f"CRITICAL ERROR in game_start: {e}")
                 import traceback; traceback.print_exc()
@@ -943,34 +759,23 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
         return
 
     elif data in ['set_start_image', 'set_stop_image', 'set_result_image', 'delete_images', 'del_start', 'del_stop', 'del_result', 'back_to_main', 'toggle_auto_dice', 'backup_data', 'restore_data']:
-        # All other configuration callbacks → owner only
         if user.id != OWNER_ID:
             await query.answer("ပိုင်ရှင်အတွက်သာဖြစ်ပါသည်", show_alert=True)
             return
 
-    # Image settings
     if data == 'set_start_image':
         await query.answer()
-        await query.edit_message_text(
-            "🖼 *Game Start ပုံထည့်ရန်*\n\nပုံကိုပို့ပါ။",
-            parse_mode='Markdown'
-        )
+        await query.edit_message_text("🖼 *Game Start ပုံထည့်ရန်*\n\nပုံကိုပို့ပါ။", parse_mode='Markdown')
         context.user_data['awaiting_image'] = 'game_start'
 
     elif data == 'set_stop_image':
         await query.answer()
-        await query.edit_message_text(
-            "🖼 *Game Stop ပုံထည့်ရန်*\n\nပုံကိုပို့ပါ။",
-            parse_mode='Markdown'
-        )
+        await query.edit_message_text("🖼 *Game Stop ပုံထည့်ရန်*\n\nပုံကိုပို့ပါ။", parse_mode='Markdown')
         context.user_data['awaiting_image'] = 'game_stop'
 
     elif data == 'set_result_image':
         await query.answer()
-        await query.edit_message_text(
-            "🖼 *Result ပုံထည့်ရန်*\n\nပုံကိုပို့ပါ။",
-            parse_mode='Markdown'
-        )
+        await query.edit_message_text("🖼 *Result ပုံထည့်ရန်*\n\nပုံကိုပို့ပါ။", parse_mode='Markdown')
         context.user_data['awaiting_image'] = 'game_result'
 
     elif data == 'delete_images':
@@ -981,11 +786,7 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
             [InlineKeyboardButton("🟡 Result ပုံဖျက်", callback_data='del_result')],
             [InlineKeyboardButton("◀️ နောက်သို့", callback_data='back_to_main')]
         ]
-        await query.edit_message_text(
-            "🗑 *ဖျက်လိုသောပုံကိုရွေးပါ*",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
+        await query.edit_message_text("🗑 *ဖျက်လိုသောပုံကိုရွေးပါ*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     elif data == 'del_start':
         delete_game_image('game_start')
@@ -1015,11 +816,7 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
             [InlineKeyboardButton("💾 Backup", callback_data='backup_data'),
              InlineKeyboardButton("🔄 Restore", callback_data='restore_data')]
         ]
-        await query.edit_message_text(
-            "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
+        await query.edit_message_text("👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     elif data == 'toggle_auto_dice':
         current = get_setting('auto_dice', 'off')
@@ -1037,11 +834,7 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
             [InlineKeyboardButton("💾 Backup", callback_data='backup_data'),
              InlineKeyboardButton("🔄 Restore", callback_data='restore_data')]
         ]
-        await query.edit_message_text(
-            "👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
+        await query.edit_message_text("👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     elif data == 'backup_data':
         await query.answer()
@@ -1050,13 +843,7 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
             return
         filename = create_backup()
         with open(filename, 'rb') as f:
-            await context.bot.send_document(
-                chat_id=user.id,
-                document=f,
-                filename=filename,
-                caption=f"✅ *Backup အောင်မြင်ပါသည်*\n\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                parse_mode='Markdown'
-            )
+            await context.bot.send_document(chat_id=user.id, document=f, filename=filename, caption=f"✅ *Backup အောင်မြင်ပါသည်*\n\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", parse_mode='Markdown')
         os.remove(filename)
         await query.message.reply_text("✅ Backup ပြီးပါပြီ")
 
@@ -1065,10 +852,7 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
         if get_current_game():
             await query.message.reply_text("❌ ဂိမ်းအဖွင့်ရှိနေပါသည်။ ဂိမ်းပြီးမှ Restore လုပ်ပါ။")
             return
-        await query.message.reply_text(
-            "🔄 *Restore လုပ်ရန် Backup ဖိုင်ကို ပို့ပါ*\n\nJSON ဖိုင်သာ လက်ခံမည်။",
-            parse_mode='Markdown'
-        )
+        await query.message.reply_text("🔄 *Restore လုပ်ရန် Backup ဖိုင်ကို ပို့ပါ*\n\nJSON ဖိုင်သာ လက်ခံမည်။", parse_mode='Markdown')
         context.user_data['awaiting_restore'] = True
 
 # ==================== MESSAGE HANDLER ====================
@@ -1079,7 +863,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     print(f"MESSAGE: {text[:30]} from {user.id} in {chat.id}")
 
-    # ===== PRIVATE CHAT - Owner only =====
     if chat.type == 'private' and user.id == OWNER_ID:
         if 'awaiting_restore' in context.user_data:
             if update.message.document:
@@ -1109,15 +892,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ ပုံကိုသာ ပို့ပါ။")
             return
 
-    # ===== GAME GROUP / ANY GROUP =====
     if chat.type in ['group', 'supergroup']:
-        # Check for reply to balance update (e.g., +5000 or -2000)
         if is_staff(user.id) and update.message.reply_to_message:
             reply_text = text.strip()
             if reply_text.startswith('+') or reply_text.startswith('-'):
                 target_user = update.message.reply_to_message.from_user
                 if not target_user.is_bot:
-                    # Create/Update user just in case
                     target_mention = f"@{target_user.username}" if target_user.username else target_user.full_name
                     create_or_update_user(target_user.id, target_user.full_name, target_mention)
                     
@@ -1136,7 +916,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         op_sign = "+" if operation == 'add' else "-"
                         op_name = "သွင်း" if operation == 'add' else "ထုတ်"
                         
-                        # Notify target user
                         try:
                             await context.bot.send_message(
                                 chat_id=target_user.id,
@@ -1153,11 +932,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await update.message.reply_text(f"✅ {user_data['name']} ထံ {op_sign}{amount:,} ကျပ် {op_name}ပြီးပါပြီ")
                         return
                     except ValueError:
-                        pass # Not a valid number, continue to other handlers
+                        pass
 
         game = get_current_game()
 
-        # ===== KEYBOARD BUTTON ACTIONS =====
         if text == "👤 Profile":
             mention = f"@{user.username}" if user.username else user.full_name
             create_or_update_user(user.id, user.full_name, mention)
@@ -1233,14 +1011,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
             return
 
-        # Owner deposit/withdraw (must reply to a message)
         if is_staff(user.id) and update.message.reply_to_message:
             if text.startswith('+') or text.startswith('-'):
                 replied = update.message.reply_to_message
                 target_user = replied.from_user
                 target_user_id = target_user.id
 
-                # If replying to bot's profile message, extract ID
                 if target_user.id == context.bot.id:
                     match = re.search(r'🆔\s*`?(\d+)`?', replied.text or "")
                     if match:
@@ -1254,7 +1030,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     amount_str = text[1:].strip()
                     if not amount_str.isdigit():
-                        return # Not a balance update message
+                        return
                     
                     amount = int(amount_str)
                     if text.startswith('+'):
@@ -1273,10 +1049,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             )
                         except:
                             pass
-                        await update.message.reply_text(
-                            f"✅ {user_data['mention']} ထံ {amount:,} ကျပ် ထည့်ပြီးပါပြီ"
-                        )
-                    else: # Starts with '-'
+                        await update.message.reply_text(f"✅ {user_data['mention']} ထံ {amount:,} ကျပ် ထည့်ပြီးပါပြီ")
+                    else:
                         if user_data['balance'] < amount:
                             await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
                             return
@@ -1295,14 +1069,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             )
                         except:
                             pass
-                        await update.message.reply_text(
-                            f"✅ {user_data['name']} ထံမှ {amount:,} ကျပ် ထုတ်ပြီးပါပြီ"
-                        )
+                        await update.message.reply_text(f"✅ {user_data['name']} ထံမှ {amount:,} ကျပ် ထုတ်ပြီးပါပြီ")
                     return
                 except ValueError:
                     pass
 
-        # ===== BETTING — no need to reply to bot, any message in group =====
         if not game or game['status'] != 'open':
             return
 
@@ -1314,10 +1085,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         create_or_update_user(user.id, user.full_name, mention)
 
         if amount < MIN_BET or amount > MAX_BET:
-            msg = await update.message.reply_text(
-                f"❌ Min {MIN_BET:,}ကျပ် — Max {MAX_BET:,}ကျပ်",
-                do_quote=True
-            )
+            msg = await update.message.reply_text(f"❌ Min {MIN_BET:,}ကျပ် — Max {MAX_BET:,}ကျပ်", do_quote=True)
             await asyncio.sleep(5)
             try: await msg.delete()
             except: pass
@@ -1325,23 +1093,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         bet_count = get_user_bet_count_for_game(user.id, game['game_id'])
         if bet_count >= 2:
-            msg = await update.message.reply_text(
-                "❌ ဤပွဲစဉ်တွင် နှစ်ကြိမ်သာ လောင်းနိုင်သည်",
-                do_quote=True
-            )
+            msg = await update.message.reply_text("❌ ဤပွဲစဉ်တွင် နှစ်ကြိမ်သာ လောင်းနိုင်သည်", do_quote=True)
             await asyncio.sleep(5)
             try: await msg.delete()
             except: pass
             return
 
-        # Check if user already bet on same number
         existing_bets = get_user_bets(user.id, game['game_id'])
         for eb in existing_bets:
             if eb[3] == bet_number:
-                msg = await update.message.reply_text(
-                    f"❌ နံပါတ် {bet_number} ကို လောင်းပြီးပါပြီ — မတူသောနံပါတ်ကိုသာ ရွေးပါ",
-                    do_quote=True
-                )
+                msg = await update.message.reply_text(f"❌ နံပါတ် {bet_number} ကို လောင်းပြီးပါပြီ — မတူသောနံပါတ်ကိုသာ ရွေးပါ", do_quote=True)
                 await asyncio.sleep(5)
                 try: await msg.delete()
                 except: pass
@@ -1388,10 +1149,8 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game_id = context.bot_data.get(f'current_game_id_{chat_id}')
     print(f"🎲 DICE: {dice_value} for {game_id}")
 
-    # Wait for dice animation to finish before showing result (~4 seconds)
     await asyncio.sleep(4)
 
-    # Process result
     winners, total_win_amount = update_bet_results(game_id, dice_value)
     game = get_current_game()
     if not game:
@@ -1432,7 +1191,6 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await unlock_chat(context.bot, chat_id)
     context.bot_data[f'awaiting_dice_{chat_id}'] = False
 
-    # Report to owner
     try:
         owner_report = (
             f"📊 *ပွဲစဉ်အစီရင်ခံစာ*\n\n"
@@ -1445,6 +1203,7 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=OWNER_ID, text=owner_report, parse_mode='Markdown')
     except: pass
 
+# ==================== ADMIN COMMANDS ====================
 async def addadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != OWNER_ID:
@@ -1501,7 +1260,6 @@ async def mmk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_input = context.args[0]
     amount_input = context.args[1]
 
-    # Find user
     user_data = None
     if target_input.isdigit():
         user_data = get_user(target_input)
@@ -1557,37 +1315,32 @@ async def mmk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းဖြစ်ရပါမည်။")
 
-# ==================== HEALTH CHECK SERVER ====================
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-    def log_message(self, format, *args):
-        pass
-
-def run_health_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    print(f"🌐 Health check server running on port {port}")
-    server.serve_forever()
-
-# ==================== RESET STUCK GAMES ====================
-def cleanup_stuck_games():
-    """Close any open games left from a previous session (e.g. server restart)."""
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"UPDATE games SET status = 'closed', closed_at = {q()} WHERE status = 'open'", (datetime.now(),))
-    affected = c.rowcount
-    conn.commit()
-    conn.close()
-    if affected:
-        print(f"⚠️  Closed {affected} stuck open game(s) from previous session.")
+async def resetgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != OWNER_ID:
+        return
+    
+    db = _load_db()
+    changed = False
+    for game in db["games"]:
+        if game.get("status") == "open":
+            game["status"] = "closed"
+            game["closed_at"] = datetime.now().isoformat()
+            changed = True
+    if changed:
+        _save_db(db)
+    
+    for key in list(context.bot_data.keys()):
+        if key.startswith('awaiting_dice_') or key.startswith('current_game_id_'):
+            context.bot_data[key] = False
+    
+    if changed:
+        await update.message.reply_text("✅ Stuck game ပွဲများ ပိတ်ပြီးပါပြီ။ ယခု ဂိမ်းအသစ် စနိုင်ပါပြီ။")
+    else:
+        await update.message.reply_text("ℹ️ Stuck game မရှိပါ။")
 
 # ==================== EXCHANGE COMMANDS ====================
 async def exchanged_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/exchangeD amount — $ မှ Dice MMK balance ကိုပြောင်း"""
     user = update.effective_user
     if not context.args:
         await update.message.reply_text(
@@ -1607,10 +1360,8 @@ async def exchanged_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ အနည်းဆုံး {EXCHANGE_RATE:,} MMK (1$) ထည့်ပါ။")
         return
 
-    # Calculate dollars needed (rounded to 4 decimal places)
     dollars_needed = round(mmk_amount / EXCHANGE_RATE, 4)
 
-    # Check waifu bot balance
     coins = get_waifu_coins(user.id)
     if coins is None:
         await update.message.reply_text("❌ Waifu Bot တွင် သင့် account မတွေ့ပါ။\nWaifu Bot ကို အရင်သုံးဖူးရပါမည်။")
@@ -1625,13 +1376,11 @@ async def exchanged_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Deduct from waifu bot
     success = subtract_waifu_coins(user.id, dollars_needed)
     if not success:
         await update.message.reply_text("❌ Waifu Bot $ နှုတ်ယူ မအောင်မြင်ပါ။ နောက်မှ ထပ်စမ်းပါ။")
         return
 
-    # Add to dice bot balance
     mention = f"@{user.username}" if user.username else user.full_name
     create_or_update_user(user.id, user.full_name, mention)
     new_dice_balance = update_balance(user.id, mmk_amount, 'add')
@@ -1649,7 +1398,6 @@ async def exchanged_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def exchangew_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/exchangeW amount — Dice MMK balance မှ $ ကိုပြောင်း"""
     user = update.effective_user
     if not context.args:
         await update.message.reply_text(
@@ -1669,7 +1417,6 @@ async def exchangew_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ အနည်းဆုံး {EXCHANGE_RATE:,} MMK (1$) ထည့်ပါ။")
         return
 
-    # Check dice bot balance
     user_data = get_user(user.id)
     if not user_data or user_data['balance'] < mmk_amount:
         current_bal = user_data['balance'] if user_data else 0
@@ -1683,19 +1430,15 @@ async def exchangew_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     dollars_earned = round(mmk_amount / EXCHANGE_RATE, 4)
 
-    # Check waifu account exists
     coins = get_waifu_coins(user.id)
     if coins is None:
         await update.message.reply_text("❌ Waifu Bot တွင် သင့် account မတွေ့ပါ။\nWaifu Bot ကို အရင်သုံးဖူးရပါမည်။")
         return
 
-    # Deduct from dice bot
     new_dice_balance = update_balance(user.id, mmk_amount, 'subtract')
 
-    # Add to waifu bot
     success = add_waifu_coins(user.id, dollars_earned)
     if not success:
-        # Rollback dice balance
         update_balance(user.id, mmk_amount, 'add')
         await update.message.reply_text("❌ Waifu Bot $ ထည့် မအောင်မြင်ပါ။ Balance ပြန်ထည့်ပြီးပါပြီ။")
         return
@@ -1712,24 +1455,21 @@ async def exchangew_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-async def resetgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id != OWNER_ID:
-        return
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"UPDATE games SET status = 'closed', closed_at = {q()} WHERE status = 'open'", (datetime.now(),))
-    affected = c.rowcount
-    conn.commit()
-    conn.close()
-    # Also clear in-memory dice flags
-    for key in list(context.bot_data.keys()):
-        if key.startswith('awaiting_dice_') or key.startswith('current_game_id_'):
-            context.bot_data[key] = False
-    if affected:
-        await update.message.reply_text(f"✅ Stuck game {affected} ပွဲ ပိတ်ပြီးပါပြီ။ ယခု ဂိမ်းအသစ် စနိုင်ပါပြီ။")
-    else:
-        await update.message.reply_text("ℹ️ Stuck game မရှိပါ။")
+# ==================== HEALTH CHECK SERVER ====================
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, format, *args):
+        pass
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    print(f"🌐 Health check server running on port {port}")
+    server.serve_forever()
 
 # ==================== MAIN ====================
 async def post_init(application: Application):
@@ -1737,7 +1477,6 @@ async def post_init(application: Application):
     asyncio.create_task(auto_game_loop(application))
 
 def main():
-    init_db()
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("addadmin", addadmin_command))
@@ -1758,7 +1497,6 @@ def main():
         err = context.error
         tb = "".join(traceback.format_exception(type(err), err, err.__traceback__))
         print(f"❌ ERROR:\n{tb}")
-        # Conflict = another instance is running
         from telegram.error import Conflict, TimedOut, NetworkError
         if isinstance(err, Conflict):
             print("⚠️ CONFLICT: Bot is already running elsewhere! Stop the other instance.")
@@ -1771,7 +1509,7 @@ def main():
     health_thread.start()
 
     print("=" * 50)
-    print("🎲 DICE GAME BOT STARTED")
+    print("🎲 DICE GAME BOT STARTED (JSON Database)")
     print(f"👑 OWNER: {OWNER_ID}")
     print(f"🎮 GROUP: {GAME_GROUP_ID}")
     print("=" * 50)
@@ -1779,4 +1517,4 @@ def main():
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
-    main() 
+    main()
