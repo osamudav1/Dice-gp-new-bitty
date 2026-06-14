@@ -29,7 +29,9 @@ MONGODB_URL = os.environ.get("MONGODB_URL")
 EXCHANGE_RATE = 4350  # 1$ = 4350 MMK
 
 def get_waifu_coins(user_id: int):
-    """Get user's $ coins from waifu_bot MongoDB. Returns float or None."""
+    """Get user's $ balance from waifu_bot MongoDB.
+    coins field stores cents (×100), so we divide by 100 to get dollars.
+    Returns float dollars or None if user not found."""
     if not MONGODB_URL:
         return None
     try:
@@ -37,23 +39,25 @@ def get_waifu_coins(user_id: int):
         db = client["waifu_bot"]
         user = db["users"].find_one({"id": user_id})
         client.close()
-        if user:
-            return float(user.get("coins", 0))
+        if user is not None:
+            raw = float(user.get("coins", 0))
+            return round(raw / 100, 4)  # convert cents → dollars
         return None
     except Exception as e:
         print(f"MongoDB error: {e}")
         return None
 
 def subtract_waifu_coins(user_id: int, amount_dollars: float) -> bool:
-    """Subtract $ from waifu_bot. Returns True if successful."""
+    """Subtract dollars from waifu_bot (stored as cents ×100)."""
     if not MONGODB_URL:
         return False
     try:
+        coins_to_deduct = round(amount_dollars * 100, 4)
         client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
         db = client["waifu_bot"]
         result = db["users"].update_one(
-            {"id": user_id, "coins": {"$gte": amount_dollars}},
-            {"$inc": {"coins": -amount_dollars}}
+            {"id": user_id, "coins": {"$gte": coins_to_deduct}},
+            {"$inc": {"coins": -coins_to_deduct}}
         )
         client.close()
         return result.modified_count > 0
@@ -62,15 +66,16 @@ def subtract_waifu_coins(user_id: int, amount_dollars: float) -> bool:
         return False
 
 def add_waifu_coins(user_id: int, amount_dollars: float) -> bool:
-    """Add $ to waifu_bot user. Returns True if successful."""
+    """Add dollars to waifu_bot user (stored as cents ×100)."""
     if not MONGODB_URL:
         return False
     try:
+        coins_to_add = round(amount_dollars * 100, 4)
         client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
         db = client["waifu_bot"]
         result = db["users"].update_one(
             {"id": user_id},
-            {"$inc": {"coins": amount_dollars}}
+            {"$inc": {"coins": coins_to_add}}
         )
         client.close()
         return result.modified_count > 0
