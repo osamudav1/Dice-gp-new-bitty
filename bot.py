@@ -854,11 +854,14 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
         if not is_staff(user.id):
             await query.answer("Staff သာ အသုံးပြုနိုင်သည်", show_alert=True)
             return
-        await query.answer()
+        
+        # We handle query.answer() inside each condition to avoid double answering
         if data == 'game_start':
             if get_current_game():
                 await query.answer("❌ ဂိမ်းအဖွင့်ရှိပြီးသားပါ။ /resetgame သုံးပါ", show_alert=True)
                 return
+            
+            await query.answer()
             await unlock_chat(context.bot, chat_id)
             game_id = create_game(chat_id)
             caption = (
@@ -877,6 +880,7 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
                 print(f"Error sending game start: {e}")
                 await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
         elif data == 'game_stop':
+            await query.answer()
             game = get_current_game()
             if not game:
                 await query.message.reply_text("❌ ဂိမ်းမရှိပါ")
