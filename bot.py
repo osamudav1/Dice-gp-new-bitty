@@ -837,6 +837,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     print(f"CALLBACK: {data} from {user.id}")
 
+    try:
+        await _handle_callback_inner(update, context, query, user, data, chat_id)
+    except Exception as e:
+        print(f"❌ CALLBACK ERROR [{data}]: {e}")
+        import traceback; traceback.print_exc()
+        try:
+            await query.answer("❌ Error ဖြစ်ပါသည်", show_alert=True)
+        except Exception:
+            pass
+
+async def _handle_callback_inner(update, context, query, user, data, chat_id):
+
     # game_start / game_stop → staff (owner or admin) only
     if data in ['game_start', 'game_stop']:
         if not is_staff(user.id):
@@ -845,7 +857,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         if data == 'game_start':
             if get_current_game():
-                await query.message.reply_text("❌ ဂိမ်းအဖွင့်ရှိပြီးသားပါ")
+                await query.answer("❌ ဂိမ်းအဖွင့်ရှိပြီးသားပါ။ /resetgame သုံးပါ", show_alert=True)
                 return
             await unlock_chat(context.bot, chat_id)
             game_id = create_game(chat_id)
@@ -1023,101 +1035,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
         context.user_data['awaiting_restore'] = True
-
-    # Game control (in group)
-    elif data in ['game_start', 'game_stop']:
-        await query.answer()
-
-        if data == 'game_start':
-            if get_current_game():
-                await query.message.reply_text("❌ ဂိမ်းအဖွင့်ရှိပြီးသားပါ")
-                return
-
-            # Unlock chat when game starts
-            await unlock_chat(context.bot, chat_id)
-
-            game_id = create_game(chat_id)
-
-            caption = (
-                f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
-                f"နံပါတ် ၁ မှ ၆ ထိ လောင်းနိုင်ပါသည်\n"
-                f"တစ်ယောက် နှစ်ကြိမ်အထိ လောင်းနိုင်သည် (မတူသောနံပါတ်)\n"
-                f"Min {MIN_BET:,}ကျပ် │ Max {MAX_BET:,}ကျပ်"
-            )
-
-            custom_image = get_game_image('game_start')
-            try:
-                if custom_image:
-                    await context.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=custom_image,
-                        caption=caption,
-                        parse_mode='Markdown',
-                        reply_markup=get_user_game_keyboard()
-                    )
-                else:
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=caption,
-                        parse_mode='Markdown',
-                        reply_markup=get_user_game_keyboard()
-                    )
-            except Exception as e:
-                print(f"Error sending game start: {e}")
-                await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
-
-        elif data == 'game_stop':
-            game = get_current_game()
-            if not game:
-                await query.message.reply_text("❌ ဂိမ်းမရှိပါ")
-                return
-
-            # Lock chat when game stops
-            await lock_chat(context.bot, chat_id)
-
-            game_id = game['game_id']
-            bets = get_game_bets(game_id)
-
-            bet_text = f"🎲 *ပွဲစဉ်* — `{game_id}`\n➖ လောင်းကြေးပိတ်ပြီ ➖\n\n"
-            if bets:
-                total_bet = 0
-                for bet in bets:
-                    bet_text += f"👤 {bet['user_name']} — နံပါတ် {bet['bet_number']} — {bet['amount']:,} ကျပ်\n"
-                    total_bet += bet['amount']
-                bet_text += f"\n💵 စုစုပေါင်း: {total_bet:,} ကျပ်"
-            else:
-                bet_text += "😢 လောင်းကြေးမရှိပါ"
-
-            custom_image = get_game_image('game_stop')
-            try:
-                if custom_image:
-                    await context.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=custom_image,
-                        caption=bet_text,
-                        parse_mode='Markdown',
-                        reply_markup=get_owner_button()
-                    )
-                else:
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=bet_text,
-                        parse_mode='Markdown',
-                        reply_markup=get_owner_button()
-                    )
-            except Exception as e:
-                print(f"Error sending game stop: {e}")
-                await context.bot.send_message(chat_id=chat_id, text=bet_text, parse_mode='Markdown', reply_markup=get_owner_button())
-
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="🎲 Owner — ကျေးဇူးပြု၍ အံစာတုံး ၁ တုံး ပို့ပေးပါ ⏳",
-                parse_mode='Markdown',
-                reply_markup=ReplyKeyboardRemove()
-            )
-
-            context.bot_data[f'current_game_id_{chat_id}'] = game_id
-            context.bot_data[f'awaiting_dice_{chat_id}'] = True
 
 # ==================== MESSAGE HANDLER ====================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
