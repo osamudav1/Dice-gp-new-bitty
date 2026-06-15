@@ -25,24 +25,17 @@ GAME_GROUP_ID = int(os.environ.get("GAME_GROUP_ID", "-1002849045181"))
 
 # ==================== MONGODB CONNECTIONS ====================
 MONGODB_URL = os.environ.get("MONGODB_URL")           # For Waifu Bot
-MONGODB_URL_LAST = os.environ.get("MONGODB_URL_LAST") # For Dice Balance
-EXCHANGE_RATE = 4350  # 1$ = 4350 MMK
 
 def get_waifu_client():
     if not MONGODB_URL:
         return None
     return MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
 
-def get_dice_client():
-    if not MONGODB_URL_LAST:
-        return None
-    return MongoClient(MONGODB_URL_LAST, serverSelectionTimeoutMS=5000)
-
 # ==================== WAIFU BOT INTEGRATION ====================
 def get_waifu_coins(user_id: int):
     """Get user's $ balance from waifu_bot MongoDB."""
     client = get_waifu_client()
-    if not client: return None
+    if not client: return 0.0
     try:
         db = client["waifu_bot"]
         user = db["users"].find_one({"id": user_id})
@@ -52,7 +45,7 @@ def get_waifu_coins(user_id: int):
         return 0.0
     except Exception as e:
         print(f"Waifu MongoDB error: {e}")
-        return None
+        return 0.0
     finally:
         client.close()
 
@@ -92,42 +85,7 @@ def add_waifu_coins(user_id: int, amount_dollars: float) -> bool:
     finally:
         client.close()
 
-# ==================== DICE MONGODB (BALANCE ONLY) ====================
-def get_user_balance(user_id):
-    client = get_dice_client()
-    if not client: return 0
-    try:
-        db = client.get_default_database()
-        user = db["users"].find_one({"user_id": int(user_id)})
-        return user.get("balance", 0) if user else 0
-    except Exception as e:
-        print(f"Dice MongoDB error (get_user_balance): {e}")
-        return 0
-    finally:
-        client.close()
-
-def update_balance(user_id, amount, operation='add'):
-    client = get_dice_client()
-    if not client: return 0
-    try:
-        db = client.get_default_database()
-        inc_amount = amount if operation == 'add' else -amount
-        
-        result = db["users"].find_one_and_update(
-            {"user_id": int(user_id)},
-            {"$inc": {"balance": inc_amount}},
-            return_document=True,
-            upsert=True
-        )
-        return result.get("balance", 0) if result else 0
-    except Exception as e:
-        print(f"Dice MongoDB error (update_balance): {e}")
-        return 0
-    finally:
-        client.close()
-
 # ==================== REMAINING DATA (JSON) ====================
-# Users metadata, games, bets, admins, settings still use JSON
 DB_FILE = "database.json"
 
 def _load_db():
@@ -153,8 +111,7 @@ def get_user(user_id):
     user = db["users"].get(str(user_id))
     if user:
         user["user_id"] = int(user_id)
-        # Sync balance from MongoDB
-        user["balance"] = get_user_balance(user_id)
+        user["balance"] = get_waifu_coins(user_id)
     return user
 
 def get_user_by_username(username):
@@ -164,7 +121,7 @@ def get_user_by_username(username):
     for uid, user in db["users"].items():
         if user.get("mention") == username:
             user["user_id"] = int(uid)
-            user["balance"] = get_user_balance(uid)
+            user["balance"] = get_waifu_coins(uid)
             return user
     return None
 
@@ -182,8 +139,6 @@ def create_or_update_user(user_id, name, mention):
         db["users"][uid]["name"] = name
         db["users"][uid]["mention"] = mention
     _save_db(db)
-    # Ensure balance entry exists in MongoDB
-    update_balance(user_id, 0, 'add')
 
 def update_user_stats(user_id, bet_amount, win_amount=0):
     db = _load_db()
@@ -193,8 +148,8 @@ def update_user_stats(user_id, bet_amount, win_amount=0):
         db["users"][uid]["total_win"] += win_amount
         _save_db(db)
 
-MIN_BET = 500
-MAX_BET = 1000000
+MIN_BET = 0.20
+MAX_BET = 600
 
 # ==================== GAMES ====================
 def get_next_game_id():
@@ -209,6 +164,12 @@ def get_current_game():
         if game.get("status") == "open":
             return game
     return None
+
+def get_last_results(limit=10):
+    db = _load_db()
+    closed_games = [g for g in db["games"] if g.get("status") == "closed"]
+    closed_games.sort(key=lambda x: x.get("closed_at", ""), reverse=True)
+    return closed_games[:limit]
 
 def create_game(chat_id):
     game_id = get_next_game_id()
@@ -253,14 +214,14 @@ def get_game_bets(game_id):
     return bets
 
 # ==================== BETS ====================
-def save_bet(game_id, user_id, bet_number, amount):
+def save_bet(game_id, user_id, bet_number, amount_usd):
     db = _load_db()
     bet = {
         "id": len(db["bets"]) + 1,
         "game_id": game_id,
         "user_id": user_id,
         "bet_number": bet_number,
-        "amount": amount,
+        "amount": amount_usd,
         "status": "pending",
         "win_amount": 0,
         "timestamp": datetime.now().isoformat()
@@ -269,11 +230,11 @@ def save_bet(game_id, user_id, bet_number, amount):
 
     for game in db["games"]:
         if game["game_id"] == game_id:
-            game["total_bet_amount"] += amount
+            game["total_bet_amount"] += amount_usd
             break
 
     _save_db(db)
-    update_user_stats(user_id, amount, 0)
+    update_user_stats(user_id, amount_usd, 0)
 
 def cancel_bet_db(game_id, user_id):
     db = _load_db()
@@ -402,16 +363,6 @@ def get_setting(key, default=None):
 # ==================== BACKUP & RESTORE ====================
 def create_backup():
     db = _load_db()
-    # Fetch all balances from MongoDB for backup
-    client = get_dice_client()
-    if client:
-        try:
-            mongo_db = client.get_default_database()
-            balances = list(mongo_db["users"].find({}, {"_id": 0}))
-            db["mongo_balances"] = balances
-        except: pass
-        finally: client.close()
-    
     filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(db, f, indent=2, default=str, ensure_ascii=False)
@@ -421,21 +372,6 @@ def restore_backup(file_path):
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        
-        # Restore MongoDB balances
-        balances = data.get("mongo_balances", [])
-        client = get_dice_client()
-        if client and balances:
-            try:
-                mongo_db = client.get_default_database()
-                for bdata in balances:
-                    mongo_db["users"].update_one(
-                        {"user_id": int(bdata["user_id"])},
-                        {"$set": {"balance": bdata["balance"]}},
-                        upsert=True
-                    )
-            except: pass
-            finally: client.close()
 
         required_keys = ["users", "games", "bets", "admins", "game_images", "settings", "game_id_counter"]
         json_data = {}
@@ -490,15 +426,20 @@ async def unlock_chat(bot, chat_id):
 
 # ==================== UTILITY ====================
 def parse_bet(text):
-    text = text.lower().strip()
+    """Parse bet from text. Format: 'number amount' or 'number amount$'"""
+    text = text.lower().strip().replace('$', '')
     patterns = [
-        (r'^1 (\d+)$', 1), (r'^2 (\d+)$', 2), (r'^3 (\d+)$', 3),
-        (r'^4 (\d+)$', 4), (r'^5 (\d+)$', 5), (r'^6 (\d+)$', 6),
+        (r'^1\s+(\d+(?:\.\d+)?)$', 1),
+        (r'^2\s+(\d+(?:\.\d+)?)$', 2),
+        (r'^3\s+(\d+(?:\.\d+)?)$', 3),
+        (r'^4\s+(\d+(?:\.\d+)?)$', 4),
+        (r'^5\s+(\d+(?:\.\d+)?)$', 5),
+        (r'^6\s+(\d+(?:\.\d+)?)$', 6),
     ]
     for pattern, number in patterns:
         match = re.match(pattern, text)
         if match:
-            return number, int(match.group(1))
+            return number, float(match.group(1))
     return None, None
 
 # ==================== BUTTONS ====================
@@ -513,144 +454,30 @@ def get_user_game_keyboard():
         [
             KeyboardButton("👤 Profile"),
             KeyboardButton("❌ လောင်းကြေးပယ်ဖျက်"),
+        ],
+        [
+            KeyboardButton("📊 Results"),
             KeyboardButton("❓ Help"),
         ]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
-# ==================== EXCHANGE COMMANDS ====================
-async def exchangeD_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Exchange from Waifu wallet ($) to Dice Balance (MMK)"""
-    user = update.effective_user
-
-    if not is_staff(user.id):
-        await update.message.reply_text("❌ Staff များသာ အသုံးပြုနိုင်ပါသည်။")
-        return
-
-    if not context.args:
-        await update.message.reply_text(
-            "❌ သုံးနည်း: `/exchangeD amount`\n"
-            f"ဥပမာ: `/exchangeD 10`\n\n"
-            f"💰 1$ = {EXCHANGE_RATE:,} MMK",
-            parse_mode='Markdown'
-        )
-        return
-
-    try:
-        amount_usd = float(context.args[0])
-        if amount_usd <= 0:
-            await update.message.reply_text("❌ ငွေပမာဏသည် 0 ထက်ကြီးရပါမည်။")
-            return
-    except ValueError:
-        await update.message.reply_text("❌ ဂဏန်းတစ်ခုထည့်ပါ။")
-        return
-
-    # Get Waifu balance
-    waifu_balance = get_waifu_coins(user.id)
-    if waifu_balance is None:
-        await update.message.reply_text("❌ Waifu Bot ဒေတာဘေ့စ်သို့ ချိတ်ဆက်၍မရပါ။")
-        return
-
-    if waifu_balance < amount_usd:
-        await update.message.reply_text(
-            f"❌ Waifu Wallet တွင် ငွေမလုံလောက်ပါ။\n"
-            f"💳 လက်ရှိ: {waifu_balance:,.4f}$\n"
-            f"💸 လိုအပ်သော: {amount_usd:,.4f}$",
-            parse_mode='Markdown'
-        )
-        return
-
-    amount_mmk = int(amount_usd * EXCHANGE_RATE)
-
-    # Subtract from Waifu
-    if not subtract_waifu_coins(user.id, amount_usd):
-        await update.message.reply_text("❌ Waifu Wallet မှ ငွေနုတ်ရာတွင် အမှားရှိသည်။")
-        return
-
-    # Add to Dice Balance
-    update_balance(user.id, amount_mmk, 'add')
+# ==================== RESULTS COMMAND ====================
+async def results_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show last 10 game results."""
+    last_games = get_last_results(10)
     
-    # Get updated balances
-    new_dice_balance = get_user_balance(user.id)
-    new_waifu = get_waifu_coins(user.id)
-
-    await update.message.reply_text(
-        f"✅ *Exchange အောင်မြင်ပါသည်*\n\n"
-        f"👤 {user.full_name}\n"
-        f"━━━━━━━━━━━━\n"
-        f"💸 Waifu Bot: -${amount_usd:,.4f}\n"
-        f"💵 Dice Balance: +{amount_mmk:,} MMK\n"
-        f"━━━━━━━━━━━━\n"
-        f"💰 Dice Balance: {new_dice_balance:,} MMK\n"
-        f"📊 Rate: 1$ = {EXCHANGE_RATE:,} MMK",
-        parse_mode='Markdown'
-    )
-
-
-async def exchangeW_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Exchange from Dice Balance (MMK) to Waifu wallet ($)"""
-    user = update.effective_user
-
-    if not is_staff(user.id):
-        await update.message.reply_text("❌ Staff များသာ အသုံးပြုနိုင်ပါသည်။")
+    if not last_games:
+        await update.message.reply_text("📊 *ပွဲစဉ်များ မရှိသေးပါ*", parse_mode='Markdown')
         return
-
-    if not context.args:
-        await update.message.reply_text(
-            "❌ သုံးနည်း: `/exchangeW amount`\n"
-            f"ဥပမာ: `/exchangeW 43500`\n\n"
-            f"💰 1$ = {EXCHANGE_RATE:,} MMK",
-            parse_mode='Markdown'
-        )
-        return
-
-    try:
-        amount_mmk = int(context.args[0])
-        if amount_mmk <= 0:
-            await update.message.reply_text("❌ ငွေပမာဏသည် 0 ထက်ကြီးရပါမည်။")
-            return
-    except ValueError:
-        await update.message.reply_text("❌ ဂဏန်းတစ်ခုထည့်ပါ။")
-        return
-
-    amount_usd = amount_mmk / EXCHANGE_RATE
-
-    # Get Dice balance
-    dice_balance = get_user_balance(user.id)
-    if dice_balance < amount_mmk:
-        await update.message.reply_text(
-            f"❌ Dice Balance မလုံလောက်ပါ။\n"
-            f"💰 လက်ရှိ: {dice_balance:,} MMK\n"
-            f"💸 လိုအပ်သော: {amount_mmk:,} MMK",
-            parse_mode='Markdown'
-        )
-        return
-
-    # Subtract from Dice Balance
-    update_balance(user.id, amount_mmk, 'subtract')
-
-    # Add to Waifu
-    if not add_waifu_coins(user.id, amount_usd):
-        # Rollback
-        update_balance(user.id, amount_mmk, 'add')
-        await update.message.reply_text("❌ Waifu Wallet သို့ ငွေထည့်ရာတွင် အမှားရှိသည်။")
-        return
-
-    # Get updated balances
-    new_dice_balance = get_user_balance(user.id)
-    new_waifu = get_waifu_coins(user.id)
-
-    await update.message.reply_text(
-        f"✅ *Exchange အောင်မြင်ပါသည်*\n\n"
-        f"👤 {user.full_name}\n"
-        f"━━━━━━━━━━━━\n"
-        f"💵 Dice Balance: -{amount_mmk:,} MMK\n"
-        f"💸 Waifu Bot: +${amount_usd:,.4f}\n"
-        f"━━━━━━━━━━━━\n"
-        f"💰 Dice Balance: {new_dice_balance:,} MMK\n"
-        f"📊 Rate: 1$ = {EXCHANGE_RATE:,} MMK",
-        parse_mode='Markdown'
-    )
+    
+    text = "📊 *နောက်ဆုံး ၁၀ ပွဲစဉ်ရလဒ်များ*\n\n"
+    for i, game in enumerate(last_games, 1):
+        result_num = game.get('result_number', '?')
+        closed_at = datetime.fromisoformat(game.get('closed_at', '')).strftime('%m/%d %H:%M') if game.get('closed_at') else 'unknown'
+        text += f"{i}. 🎲 {result_num} | 📅 {closed_at}\n"
+    
+    await update.message.reply_text(text, parse_mode='Markdown')
 
 # ==================== AUTO MODE LOGIC ====================
 async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
@@ -670,7 +497,7 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                     f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
                     f"နံပါတ် ၁ မှ ၆ ထိ လောင်းနိုင်ပါသည်\n"
                     f"တစ်ယောက် နှစ်ကြိမ်အထိ လောင်းနိုင်သည် (မတူသောနံပါတ်)\n"
-                    f"Min {MIN_BET:,}ကျပ် │ Max {MAX_BET:,}ကျပ်"
+                    f"Min ${MIN_BET:.2f} │ Max ${MAX_BET:.2f}"
                 )
                 custom_image = get_game_image('game_start')
                 if custom_image:
@@ -697,9 +524,9 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                 if bets:
                     total_bet = 0
                     for bet in bets:
-                        bet_text += f"👤 {bet['user_name']} — နံပါတ် {bet['bet_number']} — {bet['amount']:,} ကျပ်\n"
+                        bet_text += f"👤 {bet['user_name']} — နံပါတ် {bet['bet_number']} — ${bet['amount']:.2f}\n"
                         total_bet += bet['amount']
-                    bet_text += f"\n💵 စုစုပေါင်း: {total_bet:,} ကျပ်"
+                    bet_text += f"\n💵 စုစုပေါင်း: ${total_bet:.2f}"
                 else:
                     bet_text += "😢 လောင်းကြေးမရှိပါ"
 
@@ -733,13 +560,20 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                         for bet in winners:
                             win_amount = bet["amount"] * dice_value
                             user_info = get_user(bet["user_id"])
-                            new_balance = update_balance(bet["user_id"], win_amount, 'add')
-                            prev_balance = new_balance - win_amount
-                            result_text += (
-                                f"🏆 {user_info['name']}\n"
-                                f"   နံပါတ် {bet['bet_number']} — {bet['amount']:,} × {dice_value} = {win_amount:,} ကျပ်\n"
-                                f"   💰 {prev_balance:,} + {win_amount:,} = {new_balance:,} ကျပ်\n\n"
-                            )
+                            
+                            # Add winnings to Waifu wallet
+                            if add_waifu_coins(bet["user_id"], win_amount):
+                                new_balance = get_waifu_coins(bet["user_id"])
+                                result_text += (
+                                    f"🏆 {user_info['name']}\n"
+                                    f"   နံပါတ် {bet['bet_number']} — ${bet['amount']:.2f} × {dice_value} = ${win_amount:.2f}\n"
+                                    f"   💰 လက်ကျန်: ${new_balance:.2f}\n\n"
+                                )
+                            else:
+                                result_text += (
+                                    f"🏆 {user_info['name']}\n"
+                                    f"   နံပါတ် {bet['bet_number']} — ${bet['amount']:.2f} × {dice_value} = ${win_amount:.2f}\n\n"
+                                )
                     else:
                         result_text += "❌ အနိုင်ရသူမရှိပါ\n"
 
@@ -757,9 +591,9 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                             f"📊 *ပွဲစဉ်အစီရင်ခံစာ*\n\n"
                             f"ပွဲစဉ်: `{game_id}`\n"
                             f"အံစာတုံး: {dice_value}\n"
-                            f"စုစုပေါင်းလောင်းငွေ: {total_bet_amount:,} ကျပ်\n"
-                            f"အနိုင်ငွေပေးချေ: {total_win_amount:,} ကျပ်\n"
-                            f"အမြတ်: {owner_profit:,} ကျပ်"
+                            f"စုစုပေါင်းလောင်းငွေ: ${total_bet_amount:.2f}\n"
+                            f"အနိုင်ငွေပေးချေ: ${total_win_amount:.2f}\n"
+                            f"အမြတ်: ${owner_profit:.2f}"
                         )
                         await context.bot.send_message(chat_id=OWNER_ID, text=owner_report, parse_mode='Markdown')
                     except: pass
@@ -805,9 +639,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = (
                 "🎲 *ကစားနည်း*\n\n"
                 "နံပါတ် ရွေးပြီး လောင်းကြေးတင်ပါ\n"
-                "`1 500` ` 2 200` ` 3 50`\n\n"
-                f"💰 အနည်းဆုံး {MIN_BET:,}ကျပ်  အများဆုံး {MAX_BET:,}ကျပ်\n"
-                "📌 တစ်ယောက် တစ်ခါသာ လောင်းနိုင်သည်\n"
+                "`1 0.5` `2 1` `3 2.5`\n\n"
+                f"💰 အနည်းဆုံး ${MIN_BET:.2f}  အများဆုံး ${MAX_BET:.2f}\n"
+                "📌 တစ်ပွဲ နှစ်ကြိမ်အထိ (မတူသောနံပါတ်) လောင်းနိုင်သည်\n"
                 "💬 Group တွင် တိုက်ရိုက်ရိုက်ပို့နိုင်သည်"
             )
             await update.message.reply_text(
@@ -887,7 +721,7 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
                     f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
                     f"နံပါတ် ၁ မှ ၆ ထိ လောင်းနိုင်ပါသည်\n"
                     f"တစ်ယောက် နှစ်ကြိမ်အထိ လောင်းနိုင်သည် (မတူသောနံပါတ်)\n"
-                    f"Min {MIN_BET:,}ကျပ် │ Max {MAX_BET:,}ကျပ်"
+                    f"Min ${MIN_BET:.2f} │ Max ${MAX_BET:.2f}"
                 )
 
                 custom_image = get_game_image('game_start')
@@ -917,9 +751,9 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
             if bets:
                 total_bet = 0
                 for bet in bets:
-                    bet_text += f"👤 {bet['user_name']} — နံပါတ် {bet['bet_number']} — {bet['amount']:,} ကျပ်\n"
+                    bet_text += f"👤 {bet['user_name']} — နံပါတ် {bet['bet_number']} — ${bet['amount']:.2f}\n"
                     total_bet += bet['amount']
-                bet_text += f"\n💵 စုစုပေါင်း: {total_bet:,} ကျပ်"
+                bet_text += f"\n💵 စုစုပေါင်း: ${total_bet:.2f}"
             else:
                 bet_text += "😢 လောင်းကြေးမရှိပါ"
             custom_image = get_game_image('game_stop')
@@ -1057,16 +891,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 create_or_update_user(user.id, user.full_name, mention)
                 user_data = get_user(user.id)
 
-            waifu_coins = get_waifu_coins(user.id)
-            waifu_text = f"💳 Waifu Wallet: {waifu_coins:,.4f} $" if waifu_coins is not None else ""
-
+            waifu_balance = get_waifu_coins(user.id)
             profile_text = (
                 f"👤 *အမည်:* {user_data['name']}\n"
                 f"🆔 *ID:* `{user.id}`\n"
-                f"💰 *Dice Balance:* {user_data['balance']:,} MMK\n"
-                f"{waifu_text}\n"
-                f"📊 *စုစုပေါင်းလောင်းငွေ:* {user_data['total_bet']:,} ကျပ်\n"
-                f"🏆 *စုစုပေါင်းအနိုင်ငွေ:* {user_data['total_win']:,} ကျပ်"
+                f"💰 *လက်ကျန်ငွေ:* ${waifu_balance:.2f}\n"
+                f"📊 *စုစုပေါင်းလောင်းငွေ:* ${user_data['total_bet']:.2f}\n"
+                f"🏆 *စုစုပေါင်းအနိုင်ငွေ:* ${user_data['total_win']:.2f}"
             )
             await update.message.reply_text(profile_text, parse_mode='Markdown', do_quote=True)
             return
@@ -1082,17 +913,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try: await msg.delete()
                 except: pass
                 return
-            new_balance = update_balance(user.id, refund, 'add')
-            msg = await update.message.reply_text(
-                f"✅ လောင်းကြေးအားလုံး ပယ်ဖျက်ပြီး\n"
-                f"💵 ပြန်ရငွေ: {refund:,} ကျပ်\n"
-                f"💰 Dice Balance: {new_balance:,} MMK",
-                parse_mode='Markdown',
-                do_quote=True
-            )
+            
+            # Add refund to Waifu wallet
+            if add_waifu_coins(user.id, refund):
+                new_balance = get_waifu_coins(user.id)
+                msg = await update.message.reply_text(
+                    f"✅ လောင်းကြေးအားလုံး ပယ်ဖျက်ပြီး\n"
+                    f"💵 ပြန်ရငွေ: ${refund:.2f}\n"
+                    f"💰 လက်ကျန်: ${new_balance:.2f}",
+                    parse_mode='Markdown',
+                    do_quote=True
+                )
+            else:
+                msg = await update.message.reply_text(
+                    f"✅ လောင်းကြေးအားလုံး ပယ်ဖျက်ပြီး\n"
+                    f"💵 ပြန်ရငွေ: ${refund:.2f}",
+                    parse_mode='Markdown',
+                    do_quote=True
+                )
             await asyncio.sleep(8)
             try: await msg.delete()
             except: pass
+            return
+
+        if text == "📊 Results":
+            await results_command(update, context)
             return
 
         if text == "❓ Help":
@@ -1101,10 +946,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Group ထဲတွင် တိုက်ရိုက်ရိုက်ပို့ပါ\n"
                 "`နံပါတ် ငွေပမာဏ`\n\n"
                 "ဥပမာ:\n"
-                "`1 500` — နံပါတ် 1 ကို 500 ကျပ်\n"
-                "`3 200` — နံပါတ် 3 ကို 200 ကျပ်\n"
-                "`6 50`  — နံပါတ် 6 ကို 50 ကျပ်\n\n"
-                f"💰 Min: {MIN_BET:,} ကျပ် │ Max: {MAX_BET:,} ကျပ်\n"
+                "`1 0.5` — နံပါတ် 1 ကို 0.50$\n"
+                "`3 2` — နံပါတ် 3 ကို 2.00$\n"
+                "`6 1.25` — နံပါတ် 6 ကို 1.25$\n\n"
+                f"💰 Min: ${MIN_BET:.2f} │ Max: ${MAX_BET:.2f}\n"
                 "📌 တစ်ပွဲ နှစ်ကြိမ်အထိ (မတူသောနံပါတ်) လောင်းနိုင်သည်\n\n"
                 "⏱ ဤစာ 10 စက္ကန့်အတွင်း ပျောက်သွားမည်",
                 parse_mode='Markdown',
@@ -1133,47 +978,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 try:
                     amount_str = text[1:].strip()
-                    if not amount_str.isdigit():
-                        return
-
-                    amount = int(amount_str)
+                    amount = float(amount_str)
+                    
                     if text.startswith('+'):
-                        prev_balance = user_data['balance']
-                        new_balance = update_balance(target_user_id, amount, 'add')
-                        try:
-                            await context.bot.send_message(
-                                chat_id=target_user_id,
-                                text=f"✅ *ငွေသွင်းပြီးပါပြီ*\n\n"
-                                     f"👤 {user_data['name']}\n"
-                                     f"🆔 `{target_user_id}`\n"
-                                     f"💵 အရင်လက်ကျန်: {prev_balance:,} MMK\n"
-                                     f"💰 ထည့်ငွေ: +{amount:,} MMK\n"
-                                     f"💳 လက်ကျန်အသစ်: {new_balance:,} MMK",
-                                parse_mode='Markdown'
-                            )
-                        except:
-                            pass
-                        await update.message.reply_text(f"✅ {user_data['mention']} ထံ {amount:,} MMK ထည့်ပြီးပါပြီ")
+                        if add_waifu_coins(target_user_id, amount):
+                            new_balance = get_waifu_coins(target_user_id)
+                            try:
+                                await context.bot.send_message(
+                                    chat_id=target_user_id,
+                                    text=f"✅ *ငွေသွင်းပြီးပါပြီ*\n\n"
+                                         f"👤 {user_data['name']}\n"
+                                         f"🆔 `{target_user_id}`\n"
+                                         f"💰 ထည့်ငွေ: +${amount:.2f}\n"
+                                         f"💳 လက်ကျန်အသစ်: ${new_balance:.2f}",
+                                    parse_mode='Markdown'
+                                )
+                            except:
+                                pass
+                            await update.message.reply_text(f"✅ {user_data['mention']} ထံ ${amount:.2f} ထည့်ပြီးပါပြီ")
+                        else:
+                            await update.message.reply_text("❌ ငွေထည့်ရာတွင် အမှားရှိသည်။")
                     else:
-                        if user_data['balance'] < amount:
+                        current_balance = get_waifu_coins(target_user_id)
+                        if current_balance < amount:
                             await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
                             return
-                        prev_balance = user_data['balance']
-                        new_balance = update_balance(target_user_id, amount, 'subtract')
-                        try:
-                            await context.bot.send_message(
-                                chat_id=target_user_id,
-                                text=f"✅ *ငွေထုတ်ပြီးပါပြီ*\n\n"
-                                     f"👤 {user_data['name']}\n"
-                                     f"🆔 `{target_user_id}`\n"
-                                     f"💵 အရင်လက်ကျန်: {prev_balance:,} MMK\n"
-                                     f"💸 ထုတ်ငွေ: -{amount:,} MMK\n"
-                                     f"💳 လက်ကျန်အသစ်: {new_balance:,} MMK",
-                                parse_mode='Markdown'
-                            )
-                        except:
-                            pass
-                        await update.message.reply_text(f"✅ {user_data['name']} ထံမှ {amount:,} MMK ထုတ်ပြီးပါပြီ")
+                        if subtract_waifu_coins(target_user_id, amount):
+                            new_balance = get_waifu_coins(target_user_id)
+                            try:
+                                await context.bot.send_message(
+                                    chat_id=target_user_id,
+                                    text=f"✅ *ငွေထုတ်ပြီးပါပြီ*\n\n"
+                                         f"👤 {user_data['name']}\n"
+                                         f"🆔 `{target_user_id}`\n"
+                                         f"💸 ထုတ်ငွေ: -${amount:.2f}\n"
+                                         f"💳 လက်ကျန်အသစ်: ${new_balance:.2f}",
+                                    parse_mode='Markdown'
+                                )
+                            except:
+                                pass
+                            await update.message.reply_text(f"✅ {user_data['name']} ထံမှ ${amount:.2f} ထုတ်ပြီးပါပြီ")
+                        else:
+                            await update.message.reply_text("❌ ငွေထုတ်ရာတွင် အမှားရှိသည်။")
                     return
                 except ValueError:
                     pass
@@ -1182,14 +1028,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         bet_number, amount = parse_bet(text)
-        if not bet_number or not amount:
+        if bet_number is None or amount is None:
             return
 
         mention = f"@{user.username}" if user.username else user.full_name
         create_or_update_user(user.id, user.full_name, mention)
 
         if amount < MIN_BET or amount > MAX_BET:
-            msg = await update.message.reply_text(f"❌ Min {MIN_BET:,}ကျပ် — Max {MAX_BET:,}ကျပ်", do_quote=True)
+            msg = await update.message.reply_text(f"❌ Min ${MIN_BET:.2f} — Max ${MAX_BET:.2f}", do_quote=True)
             await asyncio.sleep(5)
             try: await msg.delete()
             except: pass
@@ -1212,25 +1058,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except: pass
                 return
 
-        user_data = get_user(user.id)
-        if not user_data or user_data['balance'] < amount:
-            msg = await update.message.reply_text("❌ Dice Balance မလုံလောက်ပါ", do_quote=True)
+        user_balance = get_waifu_coins(user.id)
+        if user_balance < amount:
+            msg = await update.message.reply_text(f"❌ လက်ကျန်ငွေ မလုံလောက်ပါ\n💰 လက်ကျန်: ${user_balance:.2f}", do_quote=True)
+            await asyncio.sleep(5)
+            try: await msg.delete()
+            except: pass
+            return
+
+        # Subtract from Waifu wallet
+        if not subtract_waifu_coins(user.id, amount):
+            msg = await update.message.reply_text("❌ ငွေနုတ်ယူရာတွင် အမှားရှိသည်။", do_quote=True)
             await asyncio.sleep(5)
             try: await msg.delete()
             except: pass
             return
 
         save_bet(game['game_id'], user.id, bet_number, amount)
-        new_balance = update_balance(user.id, amount, 'subtract')
+        new_balance = get_waifu_coins(user.id)
 
         await update.message.reply_text(
             f"🎲 *ပွဲစဉ်* `{game['game_id']}`\n"
             f"━━━━━━━━━━━━\n"
             f"👤 {user.full_name}\n"
-            f"🎯 နံပါတ် *{bet_number}* — {amount:,} ကျပ်\n"
+            f"🎯 နံပါတ် *{bet_number}* — ${amount:.2f}\n"
             f"━━━━━━━━━━━━\n"
             f"✅ လောင်းကြေးတင်ပြီးပါပြီ\n"
-            f"💰 Dice Balance: {new_balance:,} MMK",
+            f"💰 လက်ကျန်: ${new_balance:.2f}",
             parse_mode='Markdown',
             do_quote=True
         )
@@ -1275,13 +1129,19 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for bet in winners:
             win_amount = bet["amount"] * dice_value
             user_info = get_user(bet["user_id"])
-            new_balance = update_balance(bet["user_id"], win_amount, 'add')
-            prev_balance = new_balance - win_amount
-            result_text += (
-                f"🏆 {user_info['name']}\n"
-                f"   နံပါတ် {bet['bet_number']} — {bet['amount']:,} × {dice_value} = {win_amount:,} ကျပ်\n"
-                f"   💰 {prev_balance:,} + {win_amount:,} = {new_balance:,} ကျပ်\n\n"
-            )
+            
+            if add_waifu_coins(bet["user_id"], win_amount):
+                new_balance = get_waifu_coins(bet["user_id"])
+                result_text += (
+                    f"🏆 {user_info['name']}\n"
+                    f"   နံပါတ် {bet['bet_number']} — ${bet['amount']:.2f} × {dice_value} = ${win_amount:.2f}\n"
+                    f"   💰 လက်ကျန်: ${new_balance:.2f}\n\n"
+                )
+            else:
+                result_text += (
+                    f"🏆 {user_info['name']}\n"
+                    f"   နံပါတ် {bet['bet_number']} — ${bet['amount']:.2f} × {dice_value} = ${win_amount:.2f}\n\n"
+                )
     else:
         result_text += "❌ အနိုင်ရသူမရှိပါ\n"
 
@@ -1300,9 +1160,9 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📊 *ပွဲစဉ်အစီရင်ခံစာ*\n\n"
             f"ပွဲစဉ်: `{game_id}`\n"
             f"အံစာတုံး: {dice_value}\n"
-            f"စုစုပေါင်းလောင်းငွေ: {total_bet_amount:,} ကျပ်\n"
-            f"အနိုင်ငွေပေးချေ: {total_win_amount:,} ကျပ်\n"
-            f"အမြတ်: {owner_profit:,} ကျပ်"
+            f"စုစုပေါင်းလောင်းငွေ: ${total_bet_amount:.2f}\n"
+            f"အနိုင်ငွေပေးချေ: ${total_win_amount:.2f}\n"
+            f"အမြတ်: ${owner_profit:.2f}"
         )
         await context.bot.send_message(chat_id=OWNER_ID, text=owner_report, parse_mode='Markdown')
     except: pass
@@ -1358,7 +1218,7 @@ async def mmk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not context.args or len(context.args) < 2:
-        await update.message.reply_text("❌ သုံးနည်း: `/mmk [user id/username] [+-amount]`\nဥပမာ: `/mmk 123456789 +5000` သို့မဟုတ် `/mmk @username -2000`", parse_mode='Markdown')
+        await update.message.reply_text("❌ သုံးနည်း: `/mmk [user id/username] [+-amount]`\nဥပမာ: `/mmk 123456789 +50` သို့မဟုတ် `/mmk @username -20`", parse_mode='Markdown')
         return
 
     target_input = context.args[0]
@@ -1378,20 +1238,25 @@ async def mmk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if amount_input.startswith('+'):
-            amount = int(amount_input[1:])
-            prev_balance = user_data['balance']
-            new_balance = update_balance(target_user_id, amount, 'add')
-            await update.message.reply_text(f"✅ {user_data['name']} ထံ {amount:,} MMK ထည့်ပြီးပါပြီ\n💰 Dice Balance: {new_balance:,} MMK")
+            amount = float(amount_input[1:])
+            if add_waifu_coins(target_user_id, amount):
+                new_balance = get_waifu_coins(target_user_id)
+                await update.message.reply_text(f"✅ {user_data['name']} ထံ ${amount:.2f} ထည့်ပြီးပါပြီ\n💰 လက်ကျန်: ${new_balance:.2f}")
+            else:
+                await update.message.reply_text("❌ ငွေထည့်ရာတွင် အမှားရှိသည်။")
         elif amount_input.startswith('-'):
-            amount = int(amount_input[1:])
-            if user_data['balance'] < amount:
+            amount = float(amount_input[1:])
+            current_balance = get_waifu_coins(target_user_id)
+            if current_balance < amount:
                 await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
                 return
-            prev_balance = user_data['balance']
-            new_balance = update_balance(target_user_id, amount, 'subtract')
-            await update.message.reply_text(f"✅ {user_data['name']} ထံမှ {amount:,} MMK ထုတ်ပြီးပါပြီ\n💰 Dice Balance: {new_balance:,} MMK")
+            if subtract_waifu_coins(target_user_id, amount):
+                new_balance = get_waifu_coins(target_user_id)
+                await update.message.reply_text(f"✅ {user_data['name']} ထံမှ ${amount:.2f} ထုတ်ပြီးပါပြီ\n💰 လက်ကျန်: ${new_balance:.2f}")
+            else:
+                await update.message.reply_text("❌ ငွေထုတ်ရာတွင် အမှားရှိသည်။")
         else:
-            await update.message.reply_text("❌ Amount တွင် + သို့မဟုတ် - ထည့်ပါ။ ဥပမာ: +5000")
+            await update.message.reply_text("❌ Amount တွင် + သို့မဟုတ် - ထည့်ပါ။ ဥပမာ: +50")
     except ValueError:
         await update.message.reply_text("❌ ပမာဏသည် ဂဏန်းဖြစ်ရပါမည်။")
 
@@ -1422,10 +1287,10 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_profit = sum(g.get("owner_profit", 0) for g in db["games"])
     
     text = (
-        "📊 *Dice Game စာရင်းဇယား*\n\n"
+        "📊 *Dice GP စာရင်းဇယား*\n\n"
         f"🎮 စုစုပေါင်းပွဲစဉ်: {total_games}\n"
         f"🎟 စုစုပေါင်းလောင်းကြေး: {total_bets}\n"
-        f"💰 စုစုပေါင်းအမြတ်: {total_profit:,} ကျပ်"
+        f"💰 စုစုပေါင်းအမြတ်: ${total_profit:.2f}"
     )
     await update.message.reply_text(text, parse_mode='Markdown')
 
@@ -1467,8 +1332,7 @@ def main():
     application.add_handler(CommandHandler("mmk", mmk_command))
     application.add_handler(CommandHandler("resetgame", resetgame_command))
     application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(CommandHandler("exchangeD", exchangeD_command))
-    application.add_handler(CommandHandler("exchangeW", exchangeW_command))
+    application.add_handler(CommandHandler("results", results_command))
     
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
