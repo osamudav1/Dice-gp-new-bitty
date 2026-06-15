@@ -1,4 +1,4 @@
-python-telegram-bot==22.7
+python-telegram-bot[job-queue]==21.10
 Pillow
 python-dotenv
 psycopg2-binary
