@@ -23,20 +23,25 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 OWNER_ID = int(os.environ.get("OWNER_ID", "123456789"))
 GAME_GROUP_ID = int(os.environ.get("GAME_GROUP_ID", "-1002849045181"))
 
-# ==================== MONGODB ====================
-MONGODB_URL = os.environ.get("MONGODB_URL")
+# ==================== MONGODB CONNECTIONS ====================
+MONGODB_URL = os.environ.get("MONGODB_URL")           # For Waifu Bot
+MONGODB_URL_LAST = os.environ.get("MONGODB_URL_LAST") # For Dice GP Balance
 EXCHANGE_RATE = 4350  # 1$ = 4350 MMK
-DICE_DB_NAME = "dice_gp" # Database for Dice GP users
 
-def get_db_client():
+def get_waifu_client():
     if not MONGODB_URL:
         return None
     return MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
 
+def get_dice_client():
+    if not MONGODB_URL_LAST:
+        return None
+    return MongoClient(MONGODB_URL_LAST, serverSelectionTimeoutMS=5000)
+
 # ==================== WAIFU BOT INTEGRATION ====================
 def get_waifu_coins(user_id: int):
     """Get user's $ balance from waifu_bot MongoDB."""
-    client = get_db_client()
+    client = get_waifu_client()
     if not client: return None
     try:
         db = client["waifu_bot"]
@@ -53,7 +58,7 @@ def get_waifu_coins(user_id: int):
 
 def subtract_waifu_coins(user_id: int, amount_dollars: float) -> bool:
     """Subtract dollars from waifu_bot."""
-    client = get_db_client()
+    client = get_waifu_client()
     if not client: return False
     try:
         coins_to_deduct = round(amount_dollars * 100, 4)
@@ -71,7 +76,7 @@ def subtract_waifu_coins(user_id: int, amount_dollars: float) -> bool:
 
 def add_waifu_coins(user_id: int, amount_dollars: float) -> bool:
     """Add dollars to waifu_bot."""
-    client = get_db_client()
+    client = get_waifu_client()
     if not client: return False
     try:
         coins_to_add = round(amount_dollars * 100, 4)
@@ -87,65 +92,25 @@ def add_waifu_coins(user_id: int, amount_dollars: float) -> bool:
     finally:
         client.close()
 
-# ==================== DICE GP MONGODB USERS ====================
-def get_user(user_id):
-    client = get_db_client()
-    if not client: return None
+# ==================== DICE GP MONGODB (BALANCE ONLY) ====================
+def get_user_balance(user_id):
+    client = get_dice_client()
+    if not client: return 0
     try:
-        db = client[DICE_DB_NAME]
+        db = client.get_default_database()
         user = db["users"].find_one({"user_id": int(user_id)})
-        return user
+        return user.get("balance", 0) if user else 0
     except Exception as e:
-        print(f"Dice MongoDB error (get_user): {e}")
-        return None
-    finally:
-        client.close()
-
-def get_user_by_username(username):
-    if not username.startswith('@'):
-        username = '@' + username
-    client = get_db_client()
-    if not client: return None
-    try:
-        db = client[DICE_DB_NAME]
-        user = db["users"].find_one({"mention": username})
-        return user
-    except Exception as e:
-        print(f"Dice MongoDB error (get_user_by_username): {e}")
-        return None
-    finally:
-        client.close()
-
-def create_or_update_user(user_id, name, mention):
-    client = get_db_client()
-    if not client: return
-    try:
-        db = client[DICE_DB_NAME]
-        db["users"].update_one(
-            {"user_id": int(user_id)},
-            {
-                "$set": {
-                    "name": name,
-                    "mention": mention
-                },
-                "$setOnInsert": {
-                    "total_bet": 0,
-                    "total_win": 0,
-                    "balance": 0
-                }
-            },
-            upsert=True
-        )
-    except Exception as e:
-        print(f"Dice MongoDB error (create_or_update_user): {e}")
+        print(f"Dice MongoDB error (get_user_balance): {e}")
+        return 0
     finally:
         client.close()
 
 def update_balance(user_id, amount, operation='add'):
-    client = get_db_client()
+    client = get_dice_client()
     if not client: return 0
     try:
-        db = client[DICE_DB_NAME]
+        db = client.get_default_database()
         inc_amount = amount if operation == 'add' else -amount
         
         result = db["users"].find_one_and_update(
@@ -161,27 +126,14 @@ def update_balance(user_id, amount, operation='add'):
     finally:
         client.close()
 
-def update_user_stats(user_id, bet_amount, win_amount=0):
-    client = get_db_client()
-    if not client: return
-    try:
-        db = client[DICE_DB_NAME]
-        db["users"].update_one(
-            {"user_id": int(user_id)},
-            {"$inc": {"total_bet": bet_amount, "total_win": win_amount}}
-        )
-    except Exception as e:
-        print(f"Dice MongoDB error (update_user_stats): {e}")
-    finally:
-        client.close()
-
 # ==================== REMAINING DATA (JSON) ====================
-# Games, bets, admins, settings still use JSON as requested to "only touch user data"
+# Users metadata, games, bets, admins, settings still use JSON
 DB_FILE = "database.json"
 
 def _load_db():
     if not os.path.exists(DB_FILE):
         return {
+            "users": {},
             "games": [],
             "bets": [],
             "admins": [],
@@ -195,6 +147,51 @@ def _load_db():
 def _save_db(data):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, default=str, ensure_ascii=False)
+
+def get_user(user_id):
+    db = _load_db()
+    user = db["users"].get(str(user_id))
+    if user:
+        user["user_id"] = int(user_id)
+        # Sync balance from MongoDB
+        user["balance"] = get_user_balance(user_id)
+    return user
+
+def get_user_by_username(username):
+    if not username.startswith('@'):
+        username = '@' + username
+    db = _load_db()
+    for uid, user in db["users"].items():
+        if user.get("mention") == username:
+            user["user_id"] = int(uid)
+            user["balance"] = get_user_balance(uid)
+            return user
+    return None
+
+def create_or_update_user(user_id, name, mention):
+    db = _load_db()
+    uid = str(user_id)
+    if uid not in db["users"]:
+        db["users"][uid] = {
+            "name": name,
+            "mention": mention,
+            "total_bet": 0,
+            "total_win": 0
+        }
+    else:
+        db["users"][uid]["name"] = name
+        db["users"][uid]["mention"] = mention
+    _save_db(db)
+    # Ensure balance entry exists in MongoDB
+    update_balance(user_id, 0, 'add')
+
+def update_user_stats(user_id, bet_amount, win_amount=0):
+    db = _load_db()
+    uid = str(user_id)
+    if uid in db["users"]:
+        db["users"][uid]["total_bet"] += bet_amount
+        db["users"][uid]["total_win"] += win_amount
+        _save_db(db)
 
 MIN_BET = 500
 MAX_BET = 1000000
@@ -312,7 +309,6 @@ def update_bet_results(game_id, result_number):
                 bet["win_amount"] = win_amount
                 winners.append(bet)
                 total_win_amount += win_amount
-                # Stats update via MongoDB function
                 update_user_stats(bet["user_id"], 0, win_amount)
             else:
                 bet["status"] = "lost"
@@ -406,13 +402,13 @@ def get_setting(key, default=None):
 # ==================== BACKUP & RESTORE ====================
 def create_backup():
     db = _load_db()
-    # Also fetch users from MongoDB for backup
-    client = get_db_client()
+    # Fetch all balances from MongoDB for backup
+    client = get_dice_client()
     if client:
         try:
-            mongo_db = client[DICE_DB_NAME]
-            users = list(mongo_db["users"].find({}, {"_id": 0}))
-            db["users"] = {str(u["user_id"]): u for u in users}
+            mongo_db = client.get_default_database()
+            balances = list(mongo_db["users"].find({}, {"_id": 0}))
+            db["mongo_balances"] = balances
         except: pass
         finally: client.close()
     
@@ -426,22 +422,22 @@ def restore_backup(file_path):
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         
-        # Restore MongoDB users
-        users = data.get("users", {})
-        client = get_db_client()
-        if client and users:
+        # Restore MongoDB balances
+        balances = data.get("mongo_balances", [])
+        client = get_dice_client()
+        if client and balances:
             try:
-                mongo_db = client[DICE_DB_NAME]
-                for uid_str, udata in users.items():
+                mongo_db = client.get_default_database()
+                for bdata in balances:
                     mongo_db["users"].update_one(
-                        {"user_id": int(uid_str)},
-                        {"$set": udata},
+                        {"user_id": int(bdata["user_id"])},
+                        {"$set": {"balance": bdata["balance"]}},
                         upsert=True
                     )
             except: pass
             finally: client.close()
 
-        required_keys = ["games", "bets", "admins", "game_images", "settings", "game_id_counter"]
+        required_keys = ["users", "games", "bets", "admins", "game_images", "settings", "game_id_counter"]
         json_data = {}
         for key in required_keys:
             json_data[key] = data.get(key, [] if key in ["games", "bets", "admins"] else {})
