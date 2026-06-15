@@ -23,36 +23,80 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 OWNER_ID = int(os.environ.get("OWNER_ID", "123456789"))
 GAME_GROUP_ID = int(os.environ.get("GAME_GROUP_ID", "-1002849045181"))
 
-# ==================== MONGODB CONNECTIONS ====================
-MONGODB_URL = os.environ.get("MONGODB_URL")           # For Waifu Bot
+# ==================== MONGODB CONNECTION POOLING ====================
+MONGODB_URL = os.environ.get("MONGODB_URL")
+_mongo_client = None
+_mongo_client_lock = threading.Lock()
 
 def get_waifu_client():
+    """Get or create a persistent MongoDB client with connection pooling."""
+    global _mongo_client
     if not MONGODB_URL:
         return None
-    return MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
+    
+    if _mongo_client is None:
+        with _mongo_client_lock:
+            if _mongo_client is None:
+                _mongo_client = MongoClient(
+                    MONGODB_URL, 
+                    serverSelectionTimeoutMS=5000,
+                    maxPoolSize=10,
+                    minPoolSize=2
+                )
+    return _mongo_client
 
-# ==================== WAIFU BOT INTEGRATION ====================
+# ==================== WAIFU BOT INTEGRATION WITH CACHING ====================
+_waifu_cache = {}
+_waifu_cache_lock = threading.Lock()
+_cache_expiry = {}
+CACHE_TTL = 60  # 60 seconds cache
+
+def _get_cached_waifu_coins(user_id: int):
+    """Get cached waifu coins if available and not expired."""
+    with _waifu_cache_lock:
+        if user_id in _waifu_cache:
+            if time.time() < _cache_expiry.get(user_id, 0):
+                return _waifu_cache[user_id], True
+            else:
+                del _waifu_cache[user_id]
+                if user_id in _cache_expiry:
+                    del _cache_expiry[user_id]
+    return None, False
+
+def _set_cached_waifu_coins(user_id: int, amount: float):
+    """Cache waifu coins with expiry."""
+    with _waifu_cache_lock:
+        _waifu_cache[user_id] = amount
+        _cache_expiry[user_id] = time.time() + CACHE_TTL
+
 def get_waifu_coins(user_id: int):
-    """Get user's $ balance from waifu_bot MongoDB."""
+    """Get user's $ balance from waifu_bot MongoDB with caching."""
+    # Try cache first
+    cached_amount, found = _get_cached_waifu_coins(user_id)
+    if found:
+        return cached_amount
+    
     client = get_waifu_client()
-    if not client: return 0.0
+    if not client: 
+        return 0.0
     try:
         db = client["waifu_bot"]
         user = db["users"].find_one({"id": user_id})
         if user is not None:
             raw = float(user.get("coins", 0))
-            return round(raw / 100, 4)
+            amount = round(raw / 100, 4)
+            _set_cached_waifu_coins(user_id, amount)
+            return amount
         return 0.0
     except Exception as e:
         print(f"Waifu MongoDB error: {e}")
         return 0.0
-    finally:
-        client.close()
 
 def subtract_waifu_coins(user_id: int, amount_dollars: float) -> bool:
     """Subtract dollars from waifu_bot."""
     client = get_waifu_client()
-    if not client: return False
+    if not client: 
+        return False
     try:
         coins_to_deduct = round(amount_dollars * 100, 4)
         db = client["waifu_bot"]
@@ -60,17 +104,24 @@ def subtract_waifu_coins(user_id: int, amount_dollars: float) -> bool:
             {"id": user_id, "coins": {"$gte": coins_to_deduct}},
             {"$inc": {"coins": -coins_to_deduct}}
         )
-        return result.modified_count > 0
+        if result.modified_count > 0:
+            # Invalidate cache
+            with _waifu_cache_lock:
+                if user_id in _waifu_cache:
+                    del _waifu_cache[user_id]
+                if user_id in _cache_expiry:
+                    del _cache_expiry[user_id]
+            return True
+        return False
     except Exception as e:
         print(f"Waifu MongoDB error: {e}")
         return False
-    finally:
-        client.close()
 
 def add_waifu_coins(user_id: int, amount_dollars: float) -> bool:
     """Add dollars to waifu_bot."""
     client = get_waifu_client()
-    if not client: return False
+    if not client: 
+        return False
     try:
         coins_to_add = round(amount_dollars * 100, 4)
         db = client["waifu_bot"]
@@ -78,19 +129,36 @@ def add_waifu_coins(user_id: int, amount_dollars: float) -> bool:
             {"id": user_id},
             {"$inc": {"coins": coins_to_add}}
         )
-        return result.modified_count > 0
+        if result.modified_count > 0:
+            # Invalidate cache
+            with _waifu_cache_lock:
+                if user_id in _waifu_cache:
+                    del _waifu_cache[user_id]
+                if user_id in _cache_expiry:
+                    del _cache_expiry[user_id]
+            return True
+        return False
     except Exception as e:
         print(f"Waifu MongoDB error: {e}")
         return False
-    finally:
-        client.close()
 
-# ==================== REMAINING DATA (JSON) ====================
+# ==================== JSON DATABASE WITH IN-MEMORY CACHING ====================
 DB_FILE = "database.json"
+_db_cache = None
+_db_cache_lock = threading.Lock()
+_db_dirty = False
 
 def _load_db():
+    """Load database from file with in-memory caching."""
+    global _db_cache, _db_dirty
+    
+    with _db_cache_lock:
+        # If cache exists and file hasn't been modified externally, use cache
+        if _db_cache is not None:
+            return _db_cache.copy()
+    
     if not os.path.exists(DB_FILE):
-        return {
+        default_db = {
             "users": {},
             "games": [],
             "bets": [],
@@ -99,12 +167,45 @@ def _load_db():
             "settings": {},
             "game_id_counter": 100000
         }
-    with open(DB_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+        with _db_cache_lock:
+            _db_cache = default_db.copy()
+        return default_db
+    
+    try:
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        with _db_cache_lock:
+            _db_cache = data.copy()
+            _db_dirty = False
+        return data
+    except Exception as e:
+        print(f"Error loading database: {e}")
+        default_db = {
+            "users": {},
+            "games": [],
+            "bets": [],
+            "admins": [],
+            "game_images": {},
+            "settings": {},
+            "game_id_counter": 100000
+        }
+        with _db_cache_lock:
+            _db_cache = default_db.copy()
+        return default_db
 
 def _save_db(data):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, default=str, ensure_ascii=False)
+    """Save database to file and update cache."""
+    global _db_cache, _db_dirty
+    
+    with _db_cache_lock:
+        _db_cache = data.copy()
+        _db_dirty = False
+    
+    try:
+        with open(DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, default=str, ensure_ascii=False)
+    except Exception as e:
+        print(f"Error saving database: {e}")
 
 def get_user(user_id):
     db = _load_db()
@@ -1017,7 +1118,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 )
                             except:
                                 pass
-                            await update.message.reply_text(f"✅ {user_data['name']} ထံမှ ${amount:.2f} ထုတ်ပြီးပါပြီ")
+                            await update.message.reply_text(f"✅ {user_data['mention']} ထံမှ ${amount:.2f} ထုတ်ပြီးပါပြီ")
                         else:
                             await update.message.reply_text("❌ ငွေထုတ်ရာတွင် အမှားရှိသည်။")
                     return
@@ -1308,42 +1409,45 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 def run_health_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    server.serve_forever()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    print(f"✅ Health check server running on port {port}")
 
 # ==================== MAIN ====================
 def main():
-    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        print("❌ BOT_TOKEN not found!")
-        return
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
 
-    # Start health check server in thread
-    threading.Thread(target=run_health_server, daemon=True).start()
-
-    # Cleanup stuck games
     cleanup_stuck_games()
+    run_health_server()
 
-    application = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    # Handlers
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("addadmin", addadmin_command))
-    application.add_handler(CommandHandler("removeadmin", removeadmin_command))
-    application.add_handler(CommandHandler("listadmins", listadmins_command))
-    application.add_handler(CommandHandler("mmk", mmk_command))
-    application.add_handler(CommandHandler("resetgame", resetgame_command))
-    application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(CommandHandler("results", results_command))
-    
-    application.add_handler(CallbackQueryHandler(handle_callback))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(MessageHandler(filters.Dice, handle_dice))
-    application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_message))
+    # Commands
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("addadmin", addadmin_command))
+    app.add_handler(CommandHandler("removeadmin", removeadmin_command))
+    app.add_handler(CommandHandler("listadmins", listadmins_command))
+    app.add_handler(CommandHandler("mmk", mmk_command))
+    app.add_handler(CommandHandler("resetgame", resetgame_command))
+    app.add_handler(CommandHandler("stats", stats_command))
 
-    # Auto Game Loop
-    application.job_queue.run_once(auto_game_loop, 5)
+    # Callbacks
+    app.add_handler(CallbackQueryHandler(handle_callback))
 
-    print("🚀 Bot is running...")
-    application.run_polling()
+    # Messages
+    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.ALL, handle_message))
+
+    # Dice
+    app.add_handler(MessageHandler(filters.Dice.DICE, handle_dice))
+
+    # Auto game loop
+    app.job_queue.run_once(auto_game_loop, 5)
+
+    print("🎲 Dice Bot Started!")
+    app.run_polling()
 
 if __name__ == '__main__':
     main()
