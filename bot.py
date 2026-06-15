@@ -23,74 +23,165 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 OWNER_ID = int(os.environ.get("OWNER_ID", "123456789"))
 GAME_GROUP_ID = int(os.environ.get("GAME_GROUP_ID", "-1002849045181"))
 
-# ==================== MONGODB (Waifu Bot) ====================
+# ==================== MONGODB ====================
 MONGODB_URL = os.environ.get("MONGODB_URL")
 EXCHANGE_RATE = 4350  # 1$ = 4350 MMK
+DICE_DB_NAME = "dice_gp" # Database for Dice GP users
 
-def get_waifu_coins(user_id: int):
-    """Get user's $ balance from waifu_bot MongoDB."""
+def get_db_client():
     if not MONGODB_URL:
         return None
+    return MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
+
+# ==================== WAIFU BOT INTEGRATION ====================
+def get_waifu_coins(user_id: int):
+    """Get user's $ balance from waifu_bot MongoDB."""
+    client = get_db_client()
+    if not client: return None
     try:
-        client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
         db = client["waifu_bot"]
         user = db["users"].find_one({"id": user_id})
-        client.close()
         if user is not None:
             raw = float(user.get("coins", 0))
             return round(raw / 100, 4)
         return None
     except Exception as e:
-        print(f"MongoDB error: {e}")
+        print(f"Waifu MongoDB error: {e}")
         return None
+    finally:
+        client.close()
 
 def subtract_waifu_coins(user_id: int, amount_dollars: float) -> bool:
     """Subtract dollars from waifu_bot."""
-    if not MONGODB_URL:
-        return False
+    client = get_db_client()
+    if not client: return False
     try:
         coins_to_deduct = round(amount_dollars * 100, 4)
-        client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
         db = client["waifu_bot"]
         result = db["users"].update_one(
             {"id": user_id, "coins": {"$gte": coins_to_deduct}},
             {"$inc": {"coins": -coins_to_deduct}}
         )
-        client.close()
         return result.modified_count > 0
     except Exception as e:
-        print(f"MongoDB error: {e}")
+        print(f"Waifu MongoDB error: {e}")
         return False
+    finally:
+        client.close()
 
 def add_waifu_coins(user_id: int, amount_dollars: float) -> bool:
     """Add dollars to waifu_bot."""
-    if not MONGODB_URL:
-        return False
+    client = get_db_client()
+    if not client: return False
     try:
         coins_to_add = round(amount_dollars * 100, 4)
-        client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
         db = client["waifu_bot"]
         result = db["users"].update_one(
             {"id": user_id},
             {"$inc": {"coins": coins_to_add}}
         )
-        client.close()
         return result.modified_count > 0
     except Exception as e:
-        print(f"MongoDB error: {e}")
+        print(f"Waifu MongoDB error: {e}")
         return False
+    finally:
+        client.close()
 
-MIN_BET = 500
-MAX_BET = 1000000
+# ==================== DICE GP MONGODB USERS ====================
+def get_user(user_id):
+    client = get_db_client()
+    if not client: return None
+    try:
+        db = client[DICE_DB_NAME]
+        user = db["users"].find_one({"user_id": int(user_id)})
+        return user
+    except Exception as e:
+        print(f"Dice MongoDB error (get_user): {e}")
+        return None
+    finally:
+        client.close()
 
-# ==================== JSON DATABASE (SQLite REPLACEMENT) ====================
+def get_user_by_username(username):
+    if not username.startswith('@'):
+        username = '@' + username
+    client = get_db_client()
+    if not client: return None
+    try:
+        db = client[DICE_DB_NAME]
+        user = db["users"].find_one({"mention": username})
+        return user
+    except Exception as e:
+        print(f"Dice MongoDB error (get_user_by_username): {e}")
+        return None
+    finally:
+        client.close()
+
+def create_or_update_user(user_id, name, mention):
+    client = get_db_client()
+    if not client: return
+    try:
+        db = client[DICE_DB_NAME]
+        db["users"].update_one(
+            {"user_id": int(user_id)},
+            {
+                "$set": {
+                    "name": name,
+                    "mention": mention
+                },
+                "$setOnInsert": {
+                    "total_bet": 0,
+                    "total_win": 0,
+                    "balance": 0
+                }
+            },
+            upsert=True
+        )
+    except Exception as e:
+        print(f"Dice MongoDB error (create_or_update_user): {e}")
+    finally:
+        client.close()
+
+def update_balance(user_id, amount, operation='add'):
+    client = get_db_client()
+    if not client: return 0
+    try:
+        db = client[DICE_DB_NAME]
+        inc_amount = amount if operation == 'add' else -amount
+        
+        result = db["users"].find_one_and_update(
+            {"user_id": int(user_id)},
+            {"$inc": {"balance": inc_amount}},
+            return_document=True,
+            upsert=True
+        )
+        return result.get("balance", 0) if result else 0
+    except Exception as e:
+        print(f"Dice MongoDB error (update_balance): {e}")
+        return 0
+    finally:
+        client.close()
+
+def update_user_stats(user_id, bet_amount, win_amount=0):
+    client = get_db_client()
+    if not client: return
+    try:
+        db = client[DICE_DB_NAME]
+        db["users"].update_one(
+            {"user_id": int(user_id)},
+            {"$inc": {"total_bet": bet_amount, "total_win": win_amount}}
+        )
+    except Exception as e:
+        print(f"Dice MongoDB error (update_user_stats): {e}")
+    finally:
+        client.close()
+
+# ==================== REMAINING DATA (JSON) ====================
+# Games, bets, admins, settings still use JSON as requested to "only touch user data"
 DB_FILE = "database.json"
 
 def _load_db():
-    """Load database from JSON file"""
     if not os.path.exists(DB_FILE):
         return {
-            "users": {},
             "games": [],
             "bets": [],
             "admins": [],
@@ -102,72 +193,11 @@ def _load_db():
         return json.load(f)
 
 def _save_db(data):
-    """Save database to JSON file"""
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, default=str, ensure_ascii=False)
 
-# ==================== USERS ====================
-def get_user(user_id):
-    db = _load_db()
-    user = db["users"].get(str(user_id))
-    if user:
-        user["user_id"] = user_id
-    return user
-
-def get_user_by_username(username):
-    if not username.startswith('@'):
-        username = '@' + username
-    db = _load_db()
-    for uid, user in db["users"].items():
-        if user.get("mention") == username:
-            user["user_id"] = int(uid)
-            return user
-    return None
-
-def create_or_update_user(user_id, name, mention):
-    db = _load_db()
-    uid = str(user_id)
-    if uid not in db["users"]:
-        db["users"][uid] = {
-            "name": name,
-            "mention": mention,
-            "total_bet": 0,
-            "total_win": 0,
-            "balance": 0
-        }
-    else:
-        db["users"][uid]["name"] = name
-        db["users"][uid]["mention"] = mention
-    _save_db(db)
-
-def update_balance(user_id, amount, operation='add'):
-    db = _load_db()
-    uid = str(user_id)
-    if uid not in db["users"]:
-        db["users"][uid] = {
-            "name": "Unknown",
-            "mention": "",
-            "total_bet": 0,
-            "total_win": 0,
-            "balance": 0
-        }
-
-    if operation == 'add':
-        db["users"][uid]["balance"] += amount
-    else:
-        db["users"][uid]["balance"] -= amount
-
-    new_balance = db["users"][uid]["balance"]
-    _save_db(db)
-    return new_balance
-
-def update_user_stats(user_id, bet_amount, win_amount=0):
-    db = _load_db()
-    uid = str(user_id)
-    if uid in db["users"]:
-        db["users"][uid]["total_bet"] += bet_amount
-        db["users"][uid]["total_win"] += win_amount
-        _save_db(db)
+MIN_BET = 500
+MAX_BET = 1000000
 
 # ==================== GAMES ====================
 def get_next_game_id():
@@ -282,9 +312,8 @@ def update_bet_results(game_id, result_number):
                 bet["win_amount"] = win_amount
                 winners.append(bet)
                 total_win_amount += win_amount
-                uid = str(bet["user_id"])
-                if uid in db["users"]:
-                    db["users"][uid]["total_win"] += win_amount
+                # Stats update via MongoDB function
+                update_user_stats(bet["user_id"], 0, win_amount)
             else:
                 bet["status"] = "lost"
 
@@ -377,6 +406,16 @@ def get_setting(key, default=None):
 # ==================== BACKUP & RESTORE ====================
 def create_backup():
     db = _load_db()
+    # Also fetch users from MongoDB for backup
+    client = get_db_client()
+    if client:
+        try:
+            mongo_db = client[DICE_DB_NAME]
+            users = list(mongo_db["users"].find({}, {"_id": 0}))
+            db["users"] = {str(u["user_id"]): u for u in users}
+        except: pass
+        finally: client.close()
+    
     filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(db, f, indent=2, default=str, ensure_ascii=False)
@@ -386,11 +425,27 @@ def restore_backup(file_path):
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        required_keys = ["users", "games", "bets", "admins", "game_images", "settings", "game_id_counter"]
+        
+        # Restore MongoDB users
+        users = data.get("users", {})
+        client = get_db_client()
+        if client and users:
+            try:
+                mongo_db = client[DICE_DB_NAME]
+                for uid_str, udata in users.items():
+                    mongo_db["users"].update_one(
+                        {"user_id": int(uid_str)},
+                        {"$set": udata},
+                        upsert=True
+                    )
+            except: pass
+            finally: client.close()
+
+        required_keys = ["games", "bets", "admins", "game_images", "settings", "game_id_counter"]
+        json_data = {}
         for key in required_keys:
-            if key not in data:
-                data[key] = {} if key not in ["games", "bets", "admins"] else []
-        _save_db(data)
+            json_data[key] = data.get(key, [] if key in ["games", "bets", "admins"] else {})
+        _save_db(json_data)
         return True, "Restore Successful"
     except Exception as e:
         return False, str(e)
@@ -471,18 +526,16 @@ def get_user_game_keyboard():
 async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
     while True:
         try:
-            auto_dice = get_setting('auto_dice', 'off')
-            if auto_dice != 'on':
-                await asyncio.sleep(5)
+            if get_setting('auto_dice', 'off') != 'on':
+                await asyncio.sleep(10)
                 continue
 
             game = get_current_game()
             if not game:
-                await asyncio.sleep(3)
-                if get_setting('auto_dice', 'off') != 'on': continue
-
+                create_game(GAME_GROUP_ID)
                 await unlock_chat(context.bot, GAME_GROUP_ID)
-                game_id = create_game(GAME_GROUP_ID)
+                game = get_current_game()
+                game_id = game['game_id']
                 caption = (
                     f"🎲 *ပွဲစဉ်အသစ်* — `{game_id}`\n\n"
                     f"နံပါတ် ၁ မှ ၆ ထိ လောင်းနိုင်ပါသည်\n"
@@ -490,14 +543,11 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
                     f"Min {MIN_BET:,}ကျပ် │ Max {MAX_BET:,}ကျပ်"
                 )
                 custom_image = get_game_image('game_start')
-                try:
-                    if custom_image:
-                        await context.bot.send_photo(chat_id=GAME_GROUP_ID, photo=custom_image, caption=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
-                    else:
-                        await context.bot.send_message(chat_id=GAME_GROUP_ID, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
-                except Exception as e:
-                    print(f"Error starting game in {GAME_GROUP_ID}: {e}")
-                continue
+                if custom_image:
+                    await context.bot.send_photo(chat_id=GAME_GROUP_ID, photo=custom_image, caption=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
+                else:
+                    await context.bot.send_message(chat_id=GAME_GROUP_ID, text=caption, parse_mode='Markdown', reply_markup=get_user_game_keyboard())
+                await asyncio.sleep(60)
 
             bets = get_game_bets(game['game_id'])
             if bets:
@@ -551,13 +601,13 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
 
                     if winners:
                         for bet in winners:
-                            win_amount = bet[4] * dice_value
-                            user_info = get_user(bet[2])
-                            new_balance = update_balance(bet[2], win_amount, 'add')
+                            win_amount = bet["amount"] * dice_value
+                            user_info = get_user(bet["user_id"])
+                            new_balance = update_balance(bet["user_id"], win_amount, 'add')
                             prev_balance = new_balance - win_amount
                             result_text += (
                                 f"🏆 {user_info['name']}\n"
-                                f"   နံပါတ် {bet[3]} — {bet[4]:,} × {dice_value} = {win_amount:,} ကျပ်\n"
+                                f"   နံပါတ် {bet['bet_number']} — {bet['amount']:,} × {dice_value} = {win_amount:,} ကျပ်\n"
                                 f"   💰 {prev_balance:,} + {win_amount:,} = {new_balance:,} ကျပ်\n\n"
                             )
                     else:
@@ -677,7 +727,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _handle_callback_inner(update, context, query, user, data, chat_id)
     except Exception as e:
         print(f"❌ CALLBACK ERROR [{data}]: {e}")
-        import traceback; traceback.print_exc()
         try:
             await query.answer("❌ Error ဖြစ်ပါသည်", show_alert=True)
         except Exception:
@@ -724,7 +773,6 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
                     await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode='Markdown', reply_markup=reply_markup)
             except Exception as e:
                 print(f"CRITICAL ERROR in game_start: {e}")
-                import traceback; traceback.print_exc()
                 await query.message.reply_text(f"❌ ဂိမ်းစတင်ရန် အမှားအယွင်းရှိနေပါသည်: {str(e)}")
         elif data == 'game_stop':
             await query.answer()
@@ -767,42 +815,32 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
         await query.answer()
         await query.edit_message_text("🖼 *Game Start ပုံထည့်ရန်*\n\nပုံကိုပို့ပါ။", parse_mode='Markdown')
         context.user_data['awaiting_image'] = 'game_start'
-
     elif data == 'set_stop_image':
         await query.answer()
         await query.edit_message_text("🖼 *Game Stop ပုံထည့်ရန်*\n\nပုံကိုပို့ပါ။", parse_mode='Markdown')
         context.user_data['awaiting_image'] = 'game_stop'
-
     elif data == 'set_result_image':
         await query.answer()
         await query.edit_message_text("🖼 *Result ပုံထည့်ရန်*\n\nပုံကိုပို့ပါ။", parse_mode='Markdown')
         context.user_data['awaiting_image'] = 'game_result'
-
     elif data == 'delete_images':
         await query.answer()
         keyboard = [
-            [InlineKeyboardButton("🟢 Game Start ပုံဖျက်", callback_data='del_start')],
-            [InlineKeyboardButton("🔴 Game Stop ပုံဖျက်", callback_data='del_stop')],
-            [InlineKeyboardButton("🟡 Result ပုံဖျက်", callback_data='del_result')],
-            [InlineKeyboardButton("◀️ နောက်သို့", callback_data='back_to_main')]
+            [InlineKeyboardButton("🗑 Start ပုံဖျက်", callback_data='del_start')],
+            [InlineKeyboardButton("🗑 Stop ပုံဖျက်", callback_data='del_stop')],
+            [InlineKeyboardButton("🗑 Result ပုံဖျက်", callback_data='del_result')],
+            [InlineKeyboardButton("🔙 Back", callback_data='back_to_main')]
         ]
-        await query.edit_message_text("🗑 *ဖျက်လိုသောပုံကိုရွေးပါ*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-
+        await query.edit_message_text("🗑 *ပုံဖျက်ရန် ရွေးချယ်ပါ*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data == 'del_start':
         delete_game_image('game_start')
-        await query.answer("✅ ဖျက်ပြီး")
-        await query.edit_message_text("✅ Game Start ပုံဖျက်ပြီးပါပြီ")
-
+        await query.answer("✅ Start ပုံဖျက်ပြီး")
     elif data == 'del_stop':
         delete_game_image('game_stop')
-        await query.answer("✅ ဖျက်ပြီး")
-        await query.edit_message_text("✅ Game Stop ပုံဖျက်ပြီးပါပြီ")
-
+        await query.answer("✅ Stop ပုံဖျက်ပြီး")
     elif data == 'del_result':
         delete_game_image('game_result')
-        await query.answer("✅ ဖျက်ပြီး")
-        await query.edit_message_text("✅ Result ပုံဖျက်ပြီးပါပြီ")
-
+        await query.answer("✅ Result ပုံဖျက်ပြီး")
     elif data == 'back_to_main':
         await query.answer()
         auto_dice = get_setting('auto_dice', 'off')
@@ -816,14 +854,12 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
             [InlineKeyboardButton("💾 Backup", callback_data='backup_data'),
              InlineKeyboardButton("🔄 Restore", callback_data='restore_data')]
         ]
-        await query.edit_message_text("👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-
+        await query.edit_message_text("👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data == 'toggle_auto_dice':
         current = get_setting('auto_dice', 'off')
         new_val = 'on' if current == 'off' else 'off'
         set_setting('auto_dice', new_val)
-        await query.answer(f"🎲 Auto Dice: {new_val.upper()}")
-
+        await query.answer(f"Auto Dice: {new_val.upper()}")
         auto_dice_label = "🎲 Auto Dice: ON" if new_val == 'on' else "🎲 Auto Dice: OFF"
         keyboard = [
             [InlineKeyboardButton("🖼 Game Start ပုံထည့်", callback_data='set_start_image')],
@@ -834,169 +870,80 @@ async def _handle_callback_inner(update, context, query, user, data, chat_id):
             [InlineKeyboardButton("💾 Backup", callback_data='backup_data'),
              InlineKeyboardButton("🔄 Restore", callback_data='restore_data')]
         ]
-        await query.edit_message_text("👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-
+        await query.edit_message_text("👑 *ပိုင်ရှင် ထိန်းချုပ်ခန်း*\n\nအောက်ပါခလုတ်များကိုနှိပ်ပါ။", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     elif data == 'backup_data':
-        await query.answer()
-        if get_current_game():
-            await query.message.reply_text("❌ ဂိမ်းအဖွင့်ရှိနေပါသည်။ ဂိမ်းပြီးမှ Backup လုပ်ပါ။")
-            return
+        await query.answer("Backup ပြုလုပ်နေပါသည်...")
         filename = create_backup()
-        with open(filename, 'rb') as f:
-            await context.bot.send_document(chat_id=user.id, document=f, filename=filename, caption=f"✅ *Backup အောင်မြင်ပါသည်*\n\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", parse_mode='Markdown')
+        await context.bot.send_document(chat_id=user.id, document=open(filename, 'rb'), caption=f"💾 Backup: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         os.remove(filename)
-        await query.message.reply_text("✅ Backup ပြီးပါပြီ")
-
     elif data == 'restore_data':
         await query.answer()
-        if get_current_game():
-            await query.message.reply_text("❌ ဂိမ်းအဖွင့်ရှိနေပါသည်။ ဂိမ်းပြီးမှ Restore လုပ်ပါ။")
-            return
-        await query.message.reply_text("🔄 *Restore လုပ်ရန် Backup ဖိုင်ကို ပို့ပါ*\n\nJSON ဖိုင်သာ လက်ခံမည်။", parse_mode='Markdown')
+        await query.edit_message_text("🔄 *Restore ပြုလုပ်ရန်*\n\nBackup JSON ဖိုင်ကို ပို့ပေးပါ။", parse_mode='Markdown')
         context.user_data['awaiting_restore'] = True
 
 # ==================== MESSAGE HANDLER ====================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
-    text = update.message.text if update.message.text else ""
+    text = update.message.text
 
-    print(f"MESSAGE: {text[:30]} from {user.id} in {chat.id}")
+    if not text and not update.message.photo and not update.message.document:
+        return
 
-    if chat.type == 'private' and user.id == OWNER_ID:
-        if 'awaiting_restore' in context.user_data:
-            if update.message.document:
-                file = await update.message.document.get_file()
-                file_path = f"restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                await file.download_to_drive(file_path)
-                try:
-                    success, message = restore_backup(file_path)
-                    await update.message.reply_text(f"✅ {message}" if success else f"❌ {message}")
-                except Exception as e:
-                    await update.message.reply_text(f"❌ Restore failed: {str(e)}")
-                os.remove(file_path)
-                del context.user_data['awaiting_restore']
-            else:
-                await update.message.reply_text("❌ JSON ဖိုင်ကိုသာ ပို့ပါ။")
+    # Handle Photo Upload for Settings
+    if update.message.photo and context.user_data.get('awaiting_image'):
+        image_type = context.user_data['awaiting_image']
+        photo_id = update.message.photo[-1].file_id
+        save_game_image(image_type, photo_id, user.id)
+        context.user_data['awaiting_image'] = None
+        await update.message.reply_text(f"✅ {image_type} ပုံ သိမ်းဆည်းပြီးပါပြီ")
+        return
+
+    # Handle Restore File
+    if update.message.document and context.user_data.get('awaiting_restore'):
+        doc = update.message.document
+        if not doc.file_name.endswith('.json'):
+            await update.message.reply_text("❌ JSON ဖိုင်သာ ဖြစ်ရပါမည်")
             return
+        file = await context.bot.get_file(doc.file_id)
+        file_path = f"restore_{user.id}.json"
+        await file.download_to_drive(file_path)
+        success, msg = restore_backup(file_path)
+        os.remove(file_path)
+        context.user_data['awaiting_restore'] = None
+        if success:
+            await update.message.reply_text("✅ Restore အောင်မြင်ပါသည်")
+        else:
+            await update.message.reply_text(f"❌ Restore မအောင်မြင်ပါ: {msg}")
+        return
 
-        if 'awaiting_image' in context.user_data:
-            if update.message.photo:
-                image_type = context.user_data['awaiting_image']
-                photo_id = update.message.photo[-1].file_id
-                save_game_image(image_type, photo_id, user.id)
-                names = {'game_start': 'Game Start', 'game_stop': 'Game Stop', 'game_result': 'Result'}
-                await update.message.reply_text(f"✅ {names.get(image_type, '')} ပုံထည့်ပြီးပါပြီ")
-                del context.user_data['awaiting_image']
-            else:
-                await update.message.reply_text("❌ ပုံကိုသာ ပို့ပါ။")
-            return
-
-    if chat.type in ['group', 'supergroup']:
-        if is_staff(user.id) and update.message.reply_to_message:
-            reply_text = text.strip()
-            if reply_text.startswith('+') or reply_text.startswith('-'):
-                target_user = update.message.reply_to_message.from_user
-                if not target_user.is_bot:
-                    target_mention = f"@{target_user.username}" if target_user.username else target_user.full_name
-                    create_or_update_user(target_user.id, target_user.full_name, target_mention)
-
-                    try:
-                        operation = 'add' if reply_text.startswith('+') else 'subtract'
-                        amount = int(reply_text[1:])
-                        user_data = get_user(target_user.id)
-
-                        if operation == 'subtract' and user_data['balance'] < amount:
-                            await update.message.reply_text("❌ လက်ကျန်ငွေ မလုံလောက်ပါ")
-                            return
-
-                        prev_balance = user_data['balance']
-                        new_balance = update_balance(target_user.id, amount, operation)
-
-                        op_sign = "+" if operation == 'add' else "-"
-                        op_name = "သွင်း" if operation == 'add' else "ထုတ်"
-
-                        try:
-                            await context.bot.send_message(
-                                chat_id=target_user.id,
-                                text=f"✅ *ငွေ{op_name}ပြီးပါပြီ*\n\n"
-                                     f"👤 {user_data['name']}\n"
-                                     f"🆔 `{target_user.id}`\n"
-                                     f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
-                                     f"💰 {op_name}ငွေ: {op_sign}{amount:,} ကျပ်\n"
-                                     f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
-                                parse_mode='Markdown'
-                            )
-                        except: pass
-
-                        await update.message.reply_text(f"✅ {user_data['name']} ထံ {op_sign}{amount:,} ကျပ် {op_name}ပြီးပါပြီ")
-                        return
-                    except ValueError:
-                        pass
-
+    if text:
         game = get_current_game()
 
-        if text.lower().strip() in ['.bal', '/bal']:
-            mention = f"@{user.username}" if user.username else user.full_name
-            create_or_update_user(user.id, user.full_name, mention)
-            user_data = get_user(user.id)
-            if not user_data:
-                return
-            bet_text = ""
-            if game:
-                user_bets = get_user_bets(user.id, game['game_id'])
-                if user_bets:
-                    bet_text = "\n\n🎯 *ယခုလောင်းထားသောငွေ:*\n"
-                    for b in user_bets:
-                        bet_text += f"  နံပါတ် {b[3]} — {b[4]:,} ကျပ်\n"
-            msg = await update.message.reply_text(
-                f"💰 *{user_data['name']} ရဲ့ Balance*\n\n"
-                f"💳 လက်ကျန်: `{user_data['balance']:,} ကျပ်`\n"
-                f"📊 စုစုပေါင်းလောင်း: {user_data['total_bet']:,} ကျပ်\n"
-                f"🏆 စုစုပေါင်းနိုင်: {user_data['total_win']:,} ကျပ်"
-                f"{bet_text}",
-                parse_mode='Markdown',
-                do_quote=True
-            )
-            await asyncio.sleep(15)
-            try: await msg.delete()
-            except: pass
-            return
-
         if text == "👤 Profile":
-            mention = f"@{user.username}" if user.username else user.full_name
-            create_or_update_user(user.id, user.full_name, mention)
             user_data = get_user(user.id)
             if not user_data:
-                return
-            bet_text = ""
-            if game:
-                user_bets = get_user_bets(user.id, game['game_id'])
-                if user_bets:
-                    bet_text = "\n\n🎯 ယခုလောင်းထားသောငွေ:\n"
-                    for b in user_bets:
-                        bet_text += f"  နံပါတ် {b[3]} — {b[4]:,} ကျပ်\n"
-            msg = await update.message.reply_text(
-                f"👤 *{user_data['name']}*\n"
-                f"🆔 `{user_data['user_id']}`\n"
-                f"💰 လက်ကျန်: {user_data['balance']:,} ကျပ်\n"
-                f"📊 စုစုပေါင်းလောင်း: {user_data['total_bet']:,} ကျပ်\n"
-                f"🏆 စုစုပေါင်းနိုင်: {user_data['total_win']:,} ကျပ်"
-                f"{bet_text}",
-                parse_mode='Markdown',
-                do_quote=True
+                mention = f"@{user.username}" if user.username else user.full_name
+                create_or_update_user(user.id, user.full_name, mention)
+                user_data = get_user(user.id)
+
+            waifu_coins = get_waifu_coins(user.id)
+            waifu_text = f"💳 Waifu Wallet: {waifu_coins:,.4f} $" if waifu_coins is not None else ""
+
+            profile_text = (
+                f"👤 *အမည်:* {user_data['name']}\n"
+                f"🆔 *ID:* `{user.id}`\n"
+                f"💰 *လက်ကျန်ငွေ:* {user_data['balance']:,} ကျပ်\n"
+                f"{waifu_text}\n"
+                f"📊 *စုစုပေါင်းလောင်းငွေ:* {user_data['total_bet']:,} ကျပ်\n"
+                f"🏆 *စုစုပေါင်းအနိုင်ငွေ:* {user_data['total_win']:,} ကျပ်"
             )
-            await asyncio.sleep(10)
-            try: await msg.delete()
-            except: pass
+            await update.message.reply_text(profile_text, parse_mode='Markdown', do_quote=True)
             return
 
         if text == "❌ လောင်းကြေးပယ်ဖျက်":
-            if not game:
-                msg = await update.message.reply_text("❌ ယခုဂိမ်းမရှိပါ", do_quote=True)
-                await asyncio.sleep(5)
-                try: await msg.delete()
-                except: pass
+            if not game or game['status'] != 'open':
+                await update.message.reply_text("❌ ဂိမ်းဖွင့်မထားပါ", do_quote=True)
                 return
             refund = cancel_bet_db(game['game_id'], user.id)
             if refund == 0:
@@ -1196,13 +1143,13 @@ async def handle_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if winners:
         for bet in winners:
-            win_amount = bet[4] * dice_value
-            user_info = get_user(bet[2])
-            new_balance = update_balance(bet[2], win_amount, 'add')
+            win_amount = bet["amount"] * dice_value
+            user_info = get_user(bet["user_id"])
+            new_balance = update_balance(bet["user_id"], win_amount, 'add')
             prev_balance = new_balance - win_amount
             result_text += (
                 f"🏆 {user_info['name']}\n"
-                f"   နံပါတ် {bet[3]} — {bet[4]:,} × {dice_value} = {win_amount:,} ကျပ်\n"
+                f"   နံပါတ် {bet['bet_number']} — {bet['amount']:,} × {dice_value} = {win_amount:,} ကျပ်\n"
                 f"   💰 {prev_balance:,} + {win_amount:,} = {new_balance:,} ကျပ်\n\n"
             )
     else:
@@ -1304,19 +1251,7 @@ async def mmk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             amount = int(amount_input[1:])
             prev_balance = user_data['balance']
             new_balance = update_balance(target_user_id, amount, 'add')
-            try:
-                await context.bot.send_message(
-                    chat_id=target_user_id,
-                    text=f"✅ *ငွေသွင်းပြီးပါပြီ*\n\n"
-                         f"👤 {user_data['name']}\n"
-                         f"🆔 `{target_user_id}`\n"
-                         f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
-                         f"💰 ထည့်ငွေ: +{amount:,} ကျပ်\n"
-                         f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
-                    parse_mode='Markdown'
-                )
-            except: pass
-            await update.message.reply_text(f"✅ {user_data['mention']} ထံ {amount:,} ကျပ် ထည့်ပြီးပါပြီ")
+            await update.message.reply_text(f"✅ {user_data['name']} ထံ {amount:,} ကျပ် ထည့်ပြီးပါပြီ\n💰 လက်ကျန်: {new_balance:,} ကျပ်")
         elif amount_input.startswith('-'):
             amount = int(amount_input[1:])
             if user_data['balance'] < amount:
@@ -1324,61 +1259,16 @@ async def mmk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             prev_balance = user_data['balance']
             new_balance = update_balance(target_user_id, amount, 'subtract')
-            try:
-                await context.bot.send_message(
-                    chat_id=target_user_id,
-                    text=f"✅ *ငွေထုတ်ပြီးပါပြီ*\n\n"
-                         f"👤 {user_data['name']}\n"
-                         f"🆔 `{target_user_id}`\n"
-                         f"💵 အရင်လက်ကျန်: {prev_balance:,} ကျပ်\n"
-                         f"💸 ထုတ်ငွေ: -{amount:,} ကျပ်\n"
-                         f"💳 လက်ကျန်အသစ်: {new_balance:,} ကျပ်",
-                    parse_mode='Markdown'
-                )
-            except: pass
-            await update.message.reply_text(f"✅ {user_data['name']} ထံမှ {amount:,} ကျပ် ထုတ်ပြီးပါပြီ")
+            await update.message.reply_text(f"✅ {user_data['name']} ထံမှ {amount:,} ကျပ် ထုတ်ပြီးပါပြီ\n💰 လက်ကျန်: {new_balance:,} ကျပ်")
         else:
-            await update.message.reply_text("❌ ငွေပမာဏ ရှေ့တွင် + သို့မဟုတ် - ထည့်ပါ။\nဥပမာ: `+5000` သို့မဟုတ် `-2000`", parse_mode='Markdown')
+            await update.message.reply_text("❌ Amount တွင် + သို့မဟုတ် - ထည့်ပါ။ ဥပမာ: +5000")
     except ValueError:
-        await update.message.reply_text("❌ ငွေပမာဏ ဂဏန်းဖြစ်ရပါမည်။")
-
-async def bal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/bal — မိမိ dice balance စစ်ကြည့်ရန်"""
-    user = update.effective_user
-    chat = update.effective_chat
-    mention = f"@{user.username}" if user.username else user.full_name
-    create_or_update_user(user.id, user.full_name, mention)
-    user_data = get_user(user.id)
-    if not user_data:
-        await update.message.reply_text("❌ /start လုပ်ပြီးမှ စစ်ပါ။")
-        return
-    game = get_current_game()
-    bet_text = ""
-    if game:
-        user_bets = get_user_bets(user.id, game['game_id'])
-        if user_bets:
-            bet_text = "\n\n🎯 *ယခုလောင်းထားသောငွေ:*\n"
-            for b in user_bets:
-                bet_text += f"  နံပါတ် {b[3]} — {b[4]:,} ကျပ်\n"
-    msg = await update.message.reply_text(
-        f"💰 *{user_data['name']} ရဲ့ Balance*\n\n"
-        f"💳 လက်ကျန်: `{user_data['balance']:,} ကျပ်`\n"
-        f"📊 စုစုပေါင်းလောင်း: {user_data['total_bet']:,} ကျပ်\n"
-        f"🏆 စုစုပေါင်းနိုင်: {user_data['total_win']:,} ကျပ်"
-        f"{bet_text}",
-        parse_mode='Markdown',
-        do_quote=True
-    )
-    if chat.type in ['group', 'supergroup']:
-        await asyncio.sleep(15)
-        try: await msg.delete()
-        except: pass
+        await update.message.reply_text("❌ ပမာဏသည် ဂဏန်းဖြစ်ရပါမည်။")
 
 async def resetgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if user.id != OWNER_ID:
+    if not is_staff(user.id):
         return
-
     db = _load_db()
     changed = False
     for game in db["games"]:
@@ -1388,201 +1278,72 @@ async def resetgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             changed = True
     if changed:
         _save_db(db)
-
-    for key in list(context.bot_data.keys()):
-        if key.startswith('awaiting_dice_') or key.startswith('current_game_id_'):
-            context.bot_data[key] = False
-
-    if changed:
-        await update.message.reply_text("✅ Stuck game ပွဲများ ပိတ်ပြီးပါပြီ။ ယခု ဂိမ်းအသစ် စနိုင်ပါပြီ။")
+        await update.message.reply_text("✅ ပွဲစဉ်အဟောင်းများကို ပိတ်လိုက်ပါပြီ။ အသစ်ပြန်ဖွင့်နိုင်ပါပြီ။")
     else:
-        await update.message.reply_text("ℹ️ Stuck game မရှိပါ။")
+        await update.message.reply_text("ℹ️ ဖွင့်ထားသော ပွဲစဉ်မရှိပါ။")
 
-# ==================== EXCHANGE COMMANDS ====================
-async def exchanged_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not context.args:
-        await update.message.reply_text(
-            "💱 *သုံးနည်း:* `/exchangeD 4350`\n"
-            f"_(MMK ပမာဏထည့်ပါ, Rate: 1$ = {EXCHANGE_RATE:,} MMK)_",
-            parse_mode='Markdown'
-        )
+    if not is_staff(user.id):
         return
-
-    try:
-        mmk_amount = int(context.args[0])
-    except ValueError:
-        await update.message.reply_text("❌ ဂဏန်းသာ ထည့်ပါ။ ဥပမာ: `/exchangeD 4350`", parse_mode='Markdown')
-        return
-
-    if mmk_amount < EXCHANGE_RATE:
-        await update.message.reply_text(f"❌ အနည်းဆုံး {EXCHANGE_RATE:,} MMK (1$) ထည့်ပါ။")
-        return
-
-    dollars_needed = round(mmk_amount / EXCHANGE_RATE, 4)
-
-    coins = get_waifu_coins(user.id)
-    if coins is None:
-        await update.message.reply_text("❌ Waifu Bot တွင် သင့် account မတွေ့ပါ။\nWaifu Bot ကို အရင်သုံးဖူးရပါမည်။")
-        return
-
-    if coins < dollars_needed:
-        await update.message.reply_text(
-            f"❌ Waifu Bot $ လက်ကျန် မလုံလောက်ပါ\n\n"
-            f"💰 သင့်လက်ကျန်: `{coins:.4f}$`\n"
-            f"💸 လိုအပ်သည်: `{dollars_needed:.4f}$`",
-            parse_mode='Markdown'
-        )
-        return
-
-    success = subtract_waifu_coins(user.id, dollars_needed)
-    if not success:
-        await update.message.reply_text("❌ Waifu Bot $ နှုတ်ယူ မအောင်မြင်ပါ။ နောက်မှ ထပ်စမ်းပါ။")
-        return
-
-    mention = f"@{user.username}" if user.username else user.full_name
-    create_or_update_user(user.id, user.full_name, mention)
-    new_dice_balance = update_balance(user.id, mmk_amount, 'add')
-
-    await update.message.reply_text(
-        f"✅ *Exchange အောင်မြင်ပါသည်*\n\n"
-        f"👤 {user.full_name}\n"
-        f"━━━━━━━━━━━━\n"
-        f"💸 Waifu Bot: `-{dollars_needed:.4f}$`\n"
-        f"💵 Dice Bot: `+{mmk_amount:,} MMK`\n"
-        f"━━━━━━━━━━━━\n"
-        f"💰 Dice Balance: `{new_dice_balance:,} MMK`\n"
-        f"📊 Rate: 1$ = {EXCHANGE_RATE:,} MMK",
-        parse_mode='Markdown'
+    db = _load_db()
+    total_games = len(db["games"])
+    total_bets = len(db["bets"])
+    total_profit = sum(g.get("owner_profit", 0) for g in db["games"])
+    
+    text = (
+        "📊 *Dice GP စာရင်းဇယား*\n\n"
+        f"🎮 စုစုပေါင်းပွဲစဉ်: {total_games}\n"
+        f"🎟 စုစုပေါင်းလောင်းကြေး: {total_bets}\n"
+        f"💰 စုစုပေါင်းအမြတ်: {total_profit:,} ကျပ်"
     )
+    await update.message.reply_text(text, parse_mode='Markdown')
 
-async def exchangew_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not context.args:
-        await update.message.reply_text(
-            "💱 *သုံးနည်း:* `/exchangeW 4350`\n"
-            f"_(MMK ပမာဏထည့်ပါ, Rate: {EXCHANGE_RATE:,} MMK = 1$)_",
-            parse_mode='Markdown'
-        )
-        return
-
-    try:
-        mmk_amount = int(context.args[0])
-    except ValueError:
-        await update.message.reply_text("❌ ဂဏန်းသာ ထည့်ပါ။ ဥပမာ: `/exchangeW 4350`", parse_mode='Markdown')
-        return
-
-    if mmk_amount < EXCHANGE_RATE:
-        await update.message.reply_text(f"❌ အနည်းဆုံး {EXCHANGE_RATE:,} MMK (1$) ထည့်ပါ။")
-        return
-
-    user_data = get_user(user.id)
-    if not user_data or user_data['balance'] < mmk_amount:
-        current_bal = user_data['balance'] if user_data else 0
-        await update.message.reply_text(
-            f"❌ Dice Bot လက်ကျန် မလုံလောက်ပါ\n\n"
-            f"💰 သင့်လက်ကျန်: `{current_bal:,} MMK`\n"
-            f"💸 လိုအပ်သည်: `{mmk_amount:,} MMK`",
-            parse_mode='Markdown'
-        )
-        return
-
-    dollars_earned = round(mmk_amount / EXCHANGE_RATE, 4)
-
-    coins = get_waifu_coins(user.id)
-    if coins is None:
-        await update.message.reply_text("❌ Waifu Bot တွင် သင့် account မတွေ့ပါ။\nWaifu Bot ကို အရင်သုံးဖူးရပါမည်။")
-        return
-
-    new_dice_balance = update_balance(user.id, mmk_amount, 'subtract')
-
-    success = add_waifu_coins(user.id, dollars_earned)
-    if not success:
-        update_balance(user.id, mmk_amount, 'add')
-        await update.message.reply_text("❌ Waifu Bot $ ထည့် မအောင်မြင်ပါ။ Balance ပြန်ထည့်ပြီးပါပြီ။")
-        return
-
-    await update.message.reply_text(
-        f"✅ *Exchange အောင်မြင်ပါသည်*\n\n"
-        f"👤 {user.full_name}\n"
-        f"━━━━━━━━━━━━\n"
-        f"💵 Dice Bot: `-{mmk_amount:,} MMK`\n"
-        f"💸 Waifu Bot: `+{dollars_earned:.4f}$`\n"
-        f"━━━━━━━━━━━━\n"
-        f"💰 Dice Balance: `{new_dice_balance:,} MMK`\n"
-        f"📊 Rate: {EXCHANGE_RATE:,} MMK = 1$",
-        parse_mode='Markdown'
-    )
-
-# ==================== HEALTH CHECK SERVER ====================
-class HealthHandler(BaseHTTPRequestHandler):
+# ==================== WEB SERVER (Koyeb/Render Keep Alive) ====================
+class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", "2")
         self.end_headers()
         self.wfile.write(b"OK")
 
-    def do_HEAD(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", "2")
-        self.end_headers()
-
-    def log_message(self, format, *args):
-        pass
-
 def run_health_server():
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    print(f"🌐 Health check server running on port {port}")
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
 # ==================== MAIN ====================
-async def post_init(application: Application):
-    cleanup_stuck_games()
-    asyncio.create_task(auto_game_loop(application))
-
 def main():
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("addadmin", addadmin_command))
-    app.add_handler(CommandHandler("removeadmin", removeadmin_command))
-    app.add_handler(CommandHandler("listadmins", listadmins_command))
-    app.add_handler(CommandHandler("mmk", mmk_command))
-    app.add_handler(CommandHandler("bal", bal_command))
-    app.add_handler(CommandHandler("resetgame", resetgame_command))
-    app.add_handler(CommandHandler("exchangeD", exchanged_command))
-    app.add_handler(CommandHandler("exchangeW", exchangew_command))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(MessageHandler(filters.Dice.ALL, handle_dice))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_message))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
+    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+        print("❌ BOT_TOKEN not found!")
+        return
 
-    async def error_handler(update, context):
-        import traceback
-        err = context.error
-        tb = "".join(traceback.format_exception(type(err), err, err.__traceback__))
-        print(f"❌ ERROR:\n{tb}")
-        from telegram.error import Conflict, TimedOut, NetworkError
-        if isinstance(err, Conflict):
-            print("⚠️ CONFLICT: Bot is already running elsewhere! Stop the other instance.")
-        elif isinstance(err, (TimedOut, NetworkError)):
-            print("⚠️ Network issue — will retry automatically.")
+    # Start health check server in thread
+    threading.Thread(target=run_health_server, daemon=True).start()
 
-    app.add_error_handler(error_handler)
+    # Cleanup stuck games
+    cleanup_stuck_games()
 
-    health_thread = threading.Thread(target=run_health_server, daemon=True)
-    health_thread.start()
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    print("=" * 50)
-    print("🎲 DICE GAME BOT STARTED (JSON Database)")
-    print(f"👑 OWNER: {OWNER_ID}")
-    print(f"🎮 GROUP: {GAME_GROUP_ID}")
-    print("=" * 50)
+    # Handlers
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("addadmin", addadmin_command))
+    application.add_handler(CommandHandler("removeadmin", removeadmin_command))
+    application.add_handler(CommandHandler("listadmins", listadmins_command))
+    application.add_handler(CommandHandler("mmk", mmk_command))
+    application.add_handler(CommandHandler("resetgame", resetgame_command))
+    application.add_handler(CommandHandler("stats", stats_command))
+    
+    application.add_handler(CallbackQueryHandler(handle_callback))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.DICE, handle_dice))
+    application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_message))
 
-    app.run_polling(drop_pending_updates=True)
+    # Auto Game Loop
+    application.job_queue.run_once(auto_game_loop, 5)
+
+    print("🚀 Bot is running...")
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
