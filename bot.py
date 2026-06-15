@@ -1332,7 +1332,7 @@ def main():
     
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(MessageHandler(filters.DICE, handle_dice))
+    application.add_handler(MessageHandler(filters.Dice, handle_dice))
     application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_message))
 
     # Auto Game Loop
