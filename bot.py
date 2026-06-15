@@ -49,7 +49,7 @@ def get_waifu_coins(user_id: int):
         if user is not None:
             raw = float(user.get("coins", 0))
             return round(raw / 100, 4)
-        return None
+        return 0.0
     except Exception as e:
         print(f"Waifu MongoDB error: {e}")
         return None
@@ -569,6 +569,8 @@ async def exchangeD_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Add to Dice Balance
     update_balance(user.id, amount_mmk, 'add')
+    
+    # Get updated balances
     new_dice_balance = get_user_balance(user.id)
     new_waifu = get_waifu_coins(user.id)
 
@@ -634,6 +636,7 @@ async def exchangeW_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Waifu Wallet သို့ ငွေထည့်ရာတွင် အမှားရှိသည်။")
         return
 
+    # Get updated balances
     new_dice_balance = get_user_balance(user.id)
     new_waifu = get_waifu_coins(user.id)
 
