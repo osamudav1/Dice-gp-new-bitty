@@ -518,6 +518,133 @@ def get_user_game_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
+# ==================== EXCHANGE COMMANDS ====================
+async def exchangeD_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Exchange from Waifu wallet ($) to Dice GP balance (MMK)"""
+    user = update.effective_user
+
+    if not is_staff(user.id):
+        await update.message.reply_text("❌ Staff များသာ အသုံးပြုနိုင်ပါသည်။")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "❌ သုံးနည်း: `/exchangeD amount`\n"
+            f"ဥပမာ: `/exchangeD 10`\n\n"
+            f"💰 1$ = {EXCHANGE_RATE:,} MMK",
+            parse_mode='Markdown'
+        )
+        return
+
+    try:
+        amount_usd = float(context.args[0])
+        if amount_usd <= 0:
+            await update.message.reply_text("❌ ငွေပမာဏသည် 0 ထက်ကြီးရပါမည်။")
+            return
+    except ValueError:
+        await update.message.reply_text("❌ ဂဏန်းတစ်ခုထည့်ပါ။")
+        return
+
+    # Get Waifu balance
+    waifu_balance = get_waifu_coins(user.id)
+    if waifu_balance is None:
+        await update.message.reply_text("❌ Waifu Bot ဒေတာဘေ့စ်သို့ ချိတ်ဆက်၍မရပါ။")
+        return
+
+    if waifu_balance < amount_usd:
+        await update.message.reply_text(
+            f"❌ Waifu Wallet တွင် ငွေမလုံလောက်ပါ။\n"
+            f"💳 လက်ရှိ: {waifu_balance:,.4f}$\n"
+            f"💸 လိုအပ်သော: {amount_usd:,.4f}$",
+            parse_mode='Markdown'
+        )
+        return
+
+    amount_mmk = int(amount_usd * EXCHANGE_RATE)
+
+    # Subtract from Waifu
+    if not subtract_waifu_coins(user.id, amount_usd):
+        await update.message.reply_text("❌ Waifu Wallet မှ ငွေနုတ်ရာတွင် အမှားရှိသည်။")
+        return
+
+    # Add to Dice GP
+    old_balance = get_user_balance(user.id)
+    update_balance(user.id, amount_mmk, 'add')
+    new_balance = get_user_balance(user.id)
+    new_waifu = get_waifu_coins(user.id)
+
+    await update.message.reply_text(
+        f"💱 *Exchange အောင်မြင်ပါသည်* (Waifu → Dice GP) 💱\n\n"
+        f"📤 ${amount_usd:,.4f} → {amount_mmk:,} ကျပ်\n"
+        f"💱 1$ = {EXCHANGE_RATE:,} ကျပ်\n\n"
+        f"💳 Waifu အသစ်: {new_waifu:,.4f}$\n"
+        f"💰 Dice GP အသစ်: {new_balance:,} ကျပ်",
+        parse_mode='Markdown'
+    )
+
+
+async def exchangeW_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Exchange from Dice GP balance (MMK) to Waifu wallet ($)"""
+    user = update.effective_user
+
+    if not is_staff(user.id):
+        await update.message.reply_text("❌ Staff များသာ အသုံးပြုနိုင်ပါသည်။")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "❌ သုံးနည်း: `/exchangeW amount`\n"
+            f"ဥပမာ: `/exchangeW 43500`\n\n"
+            f"💰 1$ = {EXCHANGE_RATE:,} MMK",
+            parse_mode='Markdown'
+        )
+        return
+
+    try:
+        amount_mmk = int(context.args[0])
+        if amount_mmk <= 0:
+            await update.message.reply_text("❌ ငွေပမာဏသည် 0 ထက်ကြီးရပါမည်။")
+            return
+    except ValueError:
+        await update.message.reply_text("❌ ဂဏန်းတစ်ခုထည့်ပါ။")
+        return
+
+    amount_usd = amount_mmk / EXCHANGE_RATE
+
+    # Get Dice balance
+    dice_balance = get_user_balance(user.id)
+    if dice_balance < amount_mmk:
+        await update.message.reply_text(
+            f"❌ Dice GP Balance မလုံလောက်ပါ။\n"
+            f"💰 လက်ရှိ: {dice_balance:,} ကျပ်\n"
+            f"💸 လိုအပ်သော: {amount_mmk:,} ကျပ်",
+            parse_mode='Markdown'
+        )
+        return
+
+    # Subtract from Dice GP
+    old_balance = dice_balance
+    update_balance(user.id, amount_mmk, 'subtract')
+    new_balance = get_user_balance(user.id)
+
+    # Add to Waifu
+    if not add_waifu_coins(user.id, amount_usd):
+        # Rollback
+        update_balance(user.id, amount_mmk, 'add')
+        await update.message.reply_text("❌ Waifu Wallet သို့ ငွေထည့်ရာတွင် အမှားရှိသည်။")
+        return
+
+    new_waifu = get_waifu_coins(user.id)
+
+    await update.message.reply_text(
+        f"💱 *Exchange အောင်မြင်ပါသည်* (Dice GP → Waifu) 💱\n\n"
+        f"📤 {amount_mmk:,} ကျပ် → ${amount_usd:,.4f}\n"
+        f"💱 1$ = {EXCHANGE_RATE:,} ကျပ်\n\n"
+        f"💰 Dice GP အသစ်: {new_balance:,} ကျပ်\n"
+        f"💳 Waifu အသစ်: {new_waifu:,.4f}$",
+        parse_mode='Markdown'
+    )
+
 # ==================== AUTO MODE LOGIC ====================
 async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
     while True:
@@ -1333,6 +1460,8 @@ def main():
     application.add_handler(CommandHandler("mmk", mmk_command))
     application.add_handler(CommandHandler("resetgame", resetgame_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("exchangeD", exchangeD_command))
+    application.add_handler(CommandHandler("exchangeW", exchangeW_command))
     
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
