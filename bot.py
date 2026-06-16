@@ -551,17 +551,7 @@ def get_owner_button():
     return InlineKeyboardMarkup(keyboard)
 
 def get_user_game_keyboard():
-    keyboard = [
-        [
-            KeyboardButton("👤 Profile"),
-            KeyboardButton("❌ လောင်းကြေးပယ်ဖျက်"),
-        ],
-        [
-            KeyboardButton("📊 Results"),
-            KeyboardButton("❓ Help"),
-        ]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
+    return ReplyKeyboardRemove()
 
 # ==================== RESULTS COMMAND ====================
 async def results_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -710,6 +700,78 @@ async def auto_game_loop(context: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(10)
 
 # ==================== COMMAND HANDLERS ====================
+async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_data = get_user(user.id)
+    if not user_data:
+        mention = f"@{user.username}" if user.username else user.full_name
+        create_or_update_user(user.id, user.full_name, mention)
+        user_data = get_user(user.id)
+
+    waifu_balance = get_waifu_coins(user.id)
+    profile_text = (
+        f"👤 *အမည်:* {user_data['name']}\n"
+        f"🆔 *ID:* `{user.id}`\n"
+        f"💰 *လက်ကျန်ငွေ:* ${waifu_balance:.2f}\n"
+        f"📊 *စုစုပေါင်းလောင်းငွေ:* ${user_data['total_bet']:.2f}\n"
+        f"🏆 *စုစုပေါင်းအနိုင်ငွေ:* ${user_data['total_win']:.2f}"
+    )
+    await update.message.reply_text(profile_text, parse_mode='Markdown', do_quote=True)
+
+async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    game = get_current_game()
+    if not game or game['status'] != 'open':
+        await update.message.reply_text("❌ ဂိမ်းဖွင့်မထားပါ", do_quote=True)
+        return
+    refund = cancel_bet_db(game['game_id'], user.id)
+    if refund == 0:
+        msg = await update.message.reply_text("❌ လောင်းကြေးမရှိပါ", do_quote=True)
+        await asyncio.sleep(5)
+        try: await msg.delete()
+        except: pass
+        return
+    
+    # Add refund to Waifu wallet
+    if add_waifu_coins(user.id, refund):
+        new_balance = get_waifu_coins(user.id)
+        msg = await update.message.reply_text(
+            f"✅ လောင်းကြေးအားလုံး ပယ်ဖျက်ပြီး\n"
+            f"💵 ပြန်ရငွေ: ${refund:.2f}\n"
+            f"💰 လက်ကျန်: ${new_balance:.2f}",
+            parse_mode='Markdown',
+            do_quote=True
+        )
+    else:
+        msg = await update.message.reply_text(
+            f"✅ လောင်းကြေးအားလုံး ပယ်ဖျက်ပြီး\n"
+            f"💵 ပြန်ရငွေ: ${refund:.2f}",
+            parse_mode='Markdown',
+            do_quote=True
+        )
+    await asyncio.sleep(8)
+    try: await msg.delete()
+    except: pass
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = await update.message.reply_text(
+        "📖 *ကစားနည်း*\n\n"
+        "Group ထဲတွင် တိုက်ရိုက်ရိုက်ပို့ပါ\n"
+        "`နံပါတ် ငွေပမာဏ`\n\n"
+        "ဥပမာ:\n"
+        "`1 0.5` — နံပါတ် 1 ကို 0.50$\n"
+        "`3 2` — နံပါတ် 3 ကို 2.00$\n"
+        "`6 1.25` — နံပါတ် 6 ကို 1.25$\n\n"
+        f"💰 Min: ${MIN_BET:.2f} │ Max: ${MAX_BET:.2f}\n"
+        "📌 တစ်ပွဲ နှစ်ကြိမ်အထိ (မတူသောနံပါတ်) လောင်းနိုင်သည်\n\n"
+        "⏱ ဤစာ 10 စက္ကန့်အတွင်း ပျောက်သွားမည်",
+        parse_mode='Markdown',
+        do_quote=True
+    )
+    await asyncio.sleep(10)
+    try: await msg.delete()
+    except: pass
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
@@ -985,7 +1047,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text:
         game = get_current_game()
 
-        if text == "👤 Profile":
+        # Profile Command
+        if text.lower() in ["/profile", ".profile", "👤 profile"] or text == ".Profile":
             user_data = get_user(user.id)
             if not user_data:
                 mention = f"@{user.username}" if user.username else user.full_name
@@ -1003,7 +1066,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(profile_text, parse_mode='Markdown', do_quote=True)
             return
 
-        if text == "❌ လောင်းကြေးပယ်ဖျက်":
+        # Remove Bet Command
+        if text.lower() in ["/remove", ".remove", "❌ လောင်းကြေးပယ်ဖျက်"]:
             if not game or game['status'] != 'open':
                 await update.message.reply_text("❌ ဂိမ်းဖွင့်မထားပါ", do_quote=True)
                 return
@@ -1037,11 +1101,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
             return
 
-        if text == "📊 Results":
+        # Results Command
+        if text.lower() in ["/result", ".result", "📊 results"]:
             await results_command(update, context)
             return
 
-        if text == "❓ Help":
+        # Help Command
+        if text.lower() in ["/help", ".help", "❓ help"]:
             msg = await update.message.reply_text(
                 "📖 *ကစားနည်း*\n\n"
                 "Group ထဲတွင် တိုက်ရိုက်ရိုက်ပို့ပါ\n"
@@ -1427,6 +1493,11 @@ def main():
 
     # Commands
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("profile", profile_command))
+    app.add_handler(CommandHandler("remove", remove_command))
+    app.add_handler(CommandHandler("result", results_command))
+    app.add_handler(CommandHandler("results", results_command))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("addadmin", addadmin_command))
     app.add_handler(CommandHandler("removeadmin", removeadmin_command))
     app.add_handler(CommandHandler("listadmins", listadmins_command))
